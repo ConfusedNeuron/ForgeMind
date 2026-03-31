@@ -1,6 +1,7 @@
 data
 aircraft
 data/
+test_inference.py
 
 # User-specific stuff
 .idea/**/workspace.xml

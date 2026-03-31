@@ -1,21 +1,9 @@
-# Install: pip install -r requirements.txt
-#
-# Note: torch version includes CUDA 12.8 build suffix (+cu128).
-# On a CPU-only machine (e.g. for inference on GTX 1650), install torch separately:
-#   pip install torch==2.10.0  (without the +cu128 suffix)
-# Everything else installs identically on CPU and GPU machines.
- 
 kgout[gdrive]==1.2.1
 h5py==3.15.1
-numpy==2.0.2
+numpy
 pandas==2.3.3
 scikit-learn==1.6.1
 joblib==1.5.3
 optuna==4.8.0
 matplotlib==3.10.0
-
-# ── Deep learning ─────────────────────────────────────────────────────────────
-# GPU (Kaggle / training machine):
-# torch==2.10.0+cu128
-# CPU (local inference only — uncomment and comment out the line above):
 torch==2.10.0
