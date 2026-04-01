@@ -11,32 +11,39 @@
 ## 0. What You're Building — The 30-Second Version
 
 ```
+['A_dev', 'A_test', 'A_var',
+ 'T_dev', 'T_test', 'T_var',
+ 'W_dev', 'W_test', 'W_var',
+ 'X_s_dev', 'X_s_test', 'X_s_var',
+ 'X_v_dev', 'X_v_test', 'X_v_var',
+ 'Y_dev', 'Y_test']
 Sensor window (50 timesteps × 18 features)
                     │
                     ▼
     ┌───────────────────────────────┐
     │  CNN Block (Conv1d × 2)       │
     │  Local temporal patterns      │
-    │  (B, 50, 18) → (B, 50, 128)  │
+    │  (B, 50, 18) → (B, 50, 128)   │
     └───────────────┬───────────────┘
                     │
                     ▼
     ┌───────────────────────────────┐
     │  LSTM Block (2-layer)         │
     │  Degradation trajectory       │
-    │  (B, 50, 128) → (B, 128)     │
+    │  (B, 50, 128) → (B, 128)      │
     └───────────────┬───────────────┘
                     │
                     ▼
     ┌───────────────────────────────┐
     │  Regression Head              │
-    │  Linear(128→64→1)            │
-    │  (B, 128) → (B,)            │
+    │  Linear(128→64→1)             │
+    │  (B, 128) → (B,)              │
     └───────────────┬───────────────┘
                     │
                     ▼
             RUL prediction (float)
             "This machine has ~22 shift-cycles left"
+
 ```
 
 Team Agent sends you a `(50, 18)` numpy array. You return a float. That's the entire contract.
