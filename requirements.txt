@@ -7,3 +7,5 @@ joblib==1.5.3
 optuna==4.8.0
 matplotlib==3.10.0
 torch==2.10.0
+rich==14.3.3
+textual==8.2.1
