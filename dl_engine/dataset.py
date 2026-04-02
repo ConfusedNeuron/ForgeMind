@@ -122,7 +122,7 @@ class NCMAPSSDataset(Dataset):
             X_u  = X_scaled[mask]
             Y_u  = Y[mask]
             n    = len(X_u)
-            for i in range(0, n - window, stride):
+            for i in range(0, n - window + 1, stride):
                 self.samples.append(X_u[i : i + window])
                 self.labels.append(Y_u[i + window - 1, 0])
 

@@ -39,15 +39,14 @@ DEFAULT_CONFIG = {
     "cnn_filters" : 64,
     "lstm_hidden" : 128,
     "lstm_layers" : 2,
-    "dropout"     : 0.3,
+    "dropout"     : 0.4,
     "batch_size"  : 512,
-    "lr"          : 1e-3,
-    "epochs"      : 60,
+    "lr"          : 2e-4,
+    "epochs"      : 80,
     "patience"    : 20,
-    "lr_patience" : 5,
-    "lr_factor"   : 0.5,
+    "lr_patience" : 8,
+    "lr_factor"   : 0.5,   
 }
-
 
 # ── Metric helpers ─────────────────────────────────────────────────────────────
 
@@ -175,7 +174,7 @@ def train(
     print(f"Trainable parameters : {total_params:,}\n")
 
     criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"])
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg["lr"], weight_decay=1e-4)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer,
         mode     = "min",
@@ -187,6 +186,8 @@ def train(
     history           = {"train_loss": [], "val_rmse": [], "val_score": [], "lr": []}
     best_val_loss     = float("inf")
     epochs_no_improve = 0
+    WARMUP_EPOCHS = 5
+    base_lr = cfg["lr"]
 
     print(f"🚀 Training for up to {cfg['epochs']} epochs  "
           f"(early stop patience={cfg['patience']})")
@@ -195,6 +196,12 @@ def train(
     t_start = time.time()
 
     for epoch in range(1, cfg["epochs"] + 1):
+
+        # ── LR Warmup ────────────────────────────────────────────────────────
+        if epoch <= WARMUP_EPOCHS:                              # ← ADD
+            warmup_lr = base_lr * (epoch / WARMUP_EPOCHS)      # ← ADD
+            for pg in optimizer.param_groups:                   # ← ADD
+                pg['lr'] = warmup_lr  
         # train
         model.train()
         running_loss = 0.0
@@ -245,6 +252,7 @@ def train(
             best_val_loss     = val_mse
             epochs_no_improve = 0
             torch.save(ckpt, out_dir / "best_model.pt")
+            joblib.dump(scaler, out_dir / "scaler.pkl")
             print(f"          ✅ New best  (val_RMSE={val_rmse:.3f})")
         else:
             epochs_no_improve += 1
@@ -281,10 +289,10 @@ if __name__ == "__main__":
     parser.add_argument("--h5",       required=True,            help="Path to N-CMAPSS_DS02-006.h5")
     parser.add_argument("--out_dir",  default="dl_engine/weights", help="Output directory for weights")
     parser.add_argument("--sampling", type=int, default=10,     help="Subsampling stride (1=full 1Hz)")
-    parser.add_argument("--epochs",   type=int, default=60)
     parser.add_argument("--patience", type=int, default=20)
-    parser.add_argument("--lr",       type=float, default=1e-3)
-    parser.add_argument("--dropout",  type=float, default=0.3)
+    parser.add_argument("--epochs",   type=int,   default=80)
+    parser.add_argument("--lr",       type=float, default=2e-4)
+    parser.add_argument("--dropout",  type=float, default=0.4)
     args = parser.parse_args()
 
     config_override = {
