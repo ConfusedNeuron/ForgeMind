@@ -33,6 +33,7 @@ def detect_rul_cliff(old_rul: float, new_rul: float, threshold: float = 0.40) ->
         old=100, new=55  → drop=45% → True  (cliff)
         old=100, new=80  → drop=20% → False (normal wear)
         old=30,  new=14  → drop=53% → True  (cliff into OFFLINE territory)
+        old=50,  new=30  → drop=40% → True  (exactly at threshold → cliff)
 
     Args:
         old_rul:   RUL before this chaos event.
@@ -43,8 +44,8 @@ def detect_rul_cliff(old_rul: float, new_rul: float, threshold: float = 0.40) ->
         bool
     """
     if old_rul <= 0 or new_rul >= old_rul:
-        return False  # No valid old reading, or RUL improved (not a cliff)
-    return (old_rul - new_rul) / old_rul > threshold
+        return False
+    return (old_rul - new_rul) / old_rul >= threshold  # FIX: >= so exactly 40% is a cliff
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -74,21 +75,19 @@ def compute_prediction_reliability(rul_history: list) -> Tuple[str, str]:
     if len(rul_history) < 3:
         return ("CALIBRATING", "dim")
 
-    # Strip NaN/inf before computing stats — a bad oracle call must not
-    # corrupt the reliability score for the rest of the session.
     raw    = rul_history[-5:]
     values = np.array([v for v in raw if np.isfinite(v)], dtype=float)
     if len(values) < 2:
         return ("CALIBRATING", "dim")
-    mean   = float(np.mean(values))
-    std    = float(np.std(values))
-    cv     = std / (mean + 1e-6)  # coefficient of variation; avoid div/0
+    mean = float(np.mean(values))
+    std  = float(np.std(values))
+    cv   = std / (mean + 1e-6)
 
-    if cv < 0.08:     # <8% variation → very stable predictions
+    if cv < 0.08:
         return ("HIGH", "green")
-    elif cv < 0.22:   # 8–22% variation → some fluctuation
+    elif cv < 0.22:
         return ("MEDIUM", "yellow")
-    else:             # >22% variation → model is uncertain
+    else:
         return ("LOW", "red")
 
 
@@ -126,8 +125,8 @@ def check_sensor_saturation(
         Empty list = all sensors healthy.
     """
     sensor_names = (
-        [f"W{i}" for i in range(4)] +    # Operating conditions
-        [f"Xs{i}" for i in range(14)]    # Physical sensors
+        [f"W{i}" for i in range(4)] +
+        [f"Xs{i}" for i in range(14)]
     )
     saturated = []
 
@@ -292,7 +291,7 @@ def compute_degradation_leaderboard(
     A steeper negative slope = faster deterioration = higher rank (more urgent).
 
     Args:
-        machines:     dict of {machine_id: MachineState}
+        machines:      dict of {machine_id: MachineState}
         rul_histories: dict of {machine_id: [rul_1, rul_2, ...]}
 
     Returns:
@@ -305,11 +304,8 @@ def compute_degradation_leaderboard(
         history = rul_histories.get(mid, [])
 
         if len(history) >= 2:
-            # Simple linear slope over last min(5, len) readings
             n      = min(5, len(history))
             recent = history[-n:]
-            # Guard: polyfit fails on constant arrays (singular matrix)
-            # and on NaN/inf values that sneak in from a bad oracle call.
             try:
                 clean = [v for v in recent if np.isfinite(v)]
                 if len(clean) >= 2 and (max(clean) - min(clean)) > 1e-9:
@@ -341,6 +337,5 @@ def compute_degradation_leaderboard(
             "trend_color":  trend_color,
         })
 
-    # Sort: fastest degrading (most negative slope) first
     board.sort(key=lambda x: x["slope"])
     return board

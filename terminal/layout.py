@@ -23,18 +23,25 @@ from datetime import datetime
 # ─────────────────────────────────────────────────────────────────────────────
 
 def mini_sparkline(values: list, width: int = 20) -> str:
-    """Render a sparkline using Unicode block characters."""
+    """
+    Render a sparkline using Unicode block characters.
+    Always returns exactly `width` characters — left-pads with spaces
+    when fewer than `width` values are available.
+    """
     if not values:
         return "─" * width
     blocks = " ▁▂▃▄▅▆▇█"
-    mn, mx  = min(values), max(values)
-    rng     = mx - mn if mx > mn else 1.0
-    vals    = values[-width:]
-    chars   = []
+    mn, mx = min(values), max(values)
+    rng    = mx - mn if mx > mn else 1.0
+    vals   = values[-width:]
+    chars  = []
     for v in vals:
         idx = int(((v - mn) / rng) * (len(blocks) - 1))
         idx = max(0, min(idx, len(blocks) - 1))
         chars.append(blocks[idx])
+    # FIX: left-pad with spaces so output is always exactly `width` chars
+    while len(chars) < width:
+        chars.insert(0, " ")
     return "".join(chars)
 
 
@@ -103,19 +110,16 @@ class SensorFeedWidget(Static):
         rc      = rul_color(machine.rul)
         rl      = rul_label(machine.rul)
 
-        # ── Prediction reliability ────────────────────────────────────────────
         rel_label, rel_color = compute_prediction_reliability(
             state.rul_history.get(mid, [])
         )
 
-        # ── Sensor saturation check ───────────────────────────────────────────
         machine_sensor_history = state.per_machine_sensor_history.get(
             mid, [[] for _ in range(18)]
         )
         saturated_sensors = check_sensor_saturation(machine_sensor_history)
         saturated_names   = {name for name, _ in saturated_sensors}
 
-        # ── Build lines ───────────────────────────────────────────────────────
         lines = [
             f"[bold]LIVE SENSOR FEED — {machine.name}[/bold]",
             "",
@@ -132,7 +136,6 @@ class SensorFeedWidget(Static):
             history = machine_sensor_history[i] if machine_sensor_history[i] else state.sensor_history[i]
             if history:
                 spark = mini_sparkline(history[-20:])
-                # Mark saturated sensors with a ⚠ tag
                 if name in saturated_names:
                     lines.append(
                         f"  {name:>4s} [{rul_color(0)}]{spark}[/{rul_color(0)}]"
@@ -143,7 +146,6 @@ class SensorFeedWidget(Static):
             else:
                 lines.append(f"  {name:>4s} ────────────────────")
 
-        # Show summary of saturation alerts if any
         if saturated_sensors:
             lines.append("")
             lines.append(
@@ -200,7 +202,7 @@ class CapacityWidget(Static):
             f"ΣPD/T: {state.machine_req:.2f}{risk_flag}"
         )
 
-        # ── SECTION 4: Maintenance queue ─────────────────────────────────────
+        # ── SECTION 4: Maintenance queue ──────────────────────────────────────
         if state.maintenance_schedule:
             lines.append("")
             lines.append(f"  [bold]── MAINTENANCE QUEUE ──────────────────[/bold]")
@@ -218,7 +220,6 @@ class CapacityWidget(Static):
 
         # ── SECTION 5: Degradation leaderboard ───────────────────────────────
         if state.degradation_leaderboard:
-            # Only show if at least one machine has a non-stable trend
             non_stable = [
                 m for m in state.degradation_leaderboard
                 if m["trend_label"] != "STABLE →"
@@ -226,7 +227,7 @@ class CapacityWidget(Static):
             if non_stable:
                 lines.append("")
                 lines.append(f"  [bold]── DEGRADATION RATE ────────────────────[/bold]")
-                for m in state.degradation_leaderboard[:3]:  # Top 3
+                for m in state.degradation_leaderboard[:3]:
                     tc = m["trend_color"]
                     lines.append(
                         f"  [{tc}]{m['machine_name']:<14s}[/{tc}]"
@@ -248,7 +249,7 @@ AGENT_COLORS = {
     "DL Oracle":        "bold green",
     "Capacity Agent":   "yellow",
     "Floor Manager":    "bold red",
-    "Ops Alert":        "bold red",      # ← new: cliff detection, saturation
+    "Ops Alert":        "bold red",
 }
 
 
