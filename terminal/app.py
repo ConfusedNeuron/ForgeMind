@@ -29,13 +29,11 @@ import numpy as np
 from .factory_state import FactoryState
 from .layout import SensorFeedWidget, CapacityWidget, format_log_entry
 
-# ── DL Engine — live model (swap from dummy_oracle on integration day) ─────────
-# Day 10 integration is complete: one line changed from:
-#   from .dummy_oracle import predict_rul, reset_call_count
-# to:
+# ── DL Engine — live model ────────────────────────────────────────────────────
 from dl_engine.inference import predict_rul
-# If the model fails to load, check dl_engine/weights/ has best_model.pt
-# and scaler.pkl (MD5: e57131fa8f92795d77a1c8eb8d2cd6e0).
+
+# ── Agent pipeline ────────────────────────────────────────────────────────────
+from agents.agent_loop import run_agent_loop, reset_factory as reset_agent_state
 
 # ── Import ops analytics ──────────────────────────────────────────────────────
 from .ops_analytics import (
@@ -145,109 +143,41 @@ class FactoryApp(App):
     @work(thread=True)
     def _run_chaos(self, user_text: str) -> None:
         """
-        Background worker — runs the full processing pipeline.
+        Background worker — full integrated pipeline.
 
         Flow:
           1. Extract machine ID from text
-          2. Record old RUL (needed for cliff detection)
-          3. Simulate sensor injection for this machine (stub — see note below)
-          4. Build sensor window, predict RUL via live DL model
-          5. Build result → _process_result → update state
-          6. Run ops analytics (cliff, saturation, maintenance, shift health)
-          7. Refresh both panes
-
-        ── INTEGRATION NOTE (Day 10+, when agents arrive) ───────────────────
-        Step 3 currently uses _simulate_fault_reading() to generate synthetic
-        [0, 1] scaled values for sparkline display. This is STUB ONLY.
-
-        When the agent loop is wired in, replace Step 3 entirely with:
-
-            injected_window, spike = diagnostic_agent.translate_fault_to_tensor(
-                base_window_RAW, user_text
-            )
-
-        The diagnostic agent returns a RAW (unscaled) (50, 18) window.
-        predict_rul() applies the scaler internally — do NOT pre-scale here.
-        _simulate_fault_reading() becomes unused for sensor injection but is
-        kept as a sparkline-only fallback.
-        ─────────────────────────────────────────────────────────────────────
+          2. Snapshot old RUL for cliff detection
+          3. Push a simulated fault reading for sparkline display
+          4. Build base window (50×18) for the diagnostic agent
+          5. Run full agent pipeline: Input Guard → Diagnostic Agent (Gemini) →
+             DL Oracle (CNN-LSTM) → Capacity Agent (ΣPD/T) → Floor Manager (Gemini)
+          6. _process_result → update factory state + ops analytics + refresh panes
         """
         machine_id = self._extract_machine_id(user_text)
 
         # ── Step 2: Snapshot old RUL before the oracle runs ──────────────────
         old_rul = self.state.machines[machine_id].rul
 
-        # ── Step 3: Simulate sensor injection for this machine ───────────────
-        # STUB ONLY — generates pre-scaled [0,1] values for sparkline display.
-        # The dummy oracle ignored this tensor; the live DL model uses it.
-        # On agent integration day, replace this block (see docstring above).
+        # ── Step 3: Push simulated reading so sparklines update immediately ──
+        # _simulate_fault_reading() produces visual-only [0,1] values for the
+        # sensor sparklines. The diagnostic agent generates the real tensor.
         fault_reading = self._simulate_fault_reading(user_text)
         self.state.push_machine_sensor_reading(machine_id, fault_reading)
 
-        # ── Step 4: Build sensor window and predict RUL ───────────────────────
-        # NOTE: get_machine_sensor_window() returns a window built from stub
-        # readings. Predictions will be lower quality than with real diagnostic
-        # agent windows, but the full DL pipeline (weights + scaler) is live.
+        # ── Step 4: Build base window for the diagnostic agent ────────────────
         base_window = self.state.get_machine_sensor_window(machine_id)
-        rul = predict_rul(base_window)
 
-        # Guard: DL model can return NaN, inf, or negative on pathological input.
-        import math
-        if not math.isfinite(rul) or rul < 0:
-            rul = 0.0
-        rul = min(rul, 9999.0)
-
-        # ── Update active display machine so sensor pane follows the chaos ────
+        # ── Update active display machine ─────────────────────────────────────
         self.state.active_machine_id = machine_id
 
-        # ── Determine machine status ──────────────────────────────────────────
-        if rul <= 15:
-            new_status = "OFFLINE"
-        elif rul <= 30:
-            new_status = "DEGRADED"
-        else:
-            new_status = "ONLINE"
+        # ── Step 5: Full agent pipeline ───────────────────────────────────────
+        # run_agent_loop handles: Input Guard → Diagnostic Agent (injects spike
+        # into base_window) → predict_rul() → Capacity Agent → Floor Manager.
+        # Returns a result dict directly compatible with _process_result().
+        result = run_agent_loop(user_text, machine_id, base_window, predict_rul)
 
-        result = {
-            "valid": True,
-            "rejection_reason": "",
-            "spike": {
-                "sensor_id":                 "Xs4",   # hardcoded stub; agent will return real ID
-                "spike_value":               float(np.max(fault_reading[4:9])),
-                "affected_window_positions": [45, 46, 47, 48, 49],
-                "fault_severity":            "HIGH" if rul <= 15 else ("MEDIUM" if rul <= 30 else "LOW"),
-                "plain_english_summary":     "Sensor spike detected — fault signature matched.",
-            },
-            "rul": rul,
-            "capacity_report": {
-                "machine_id":     machine_id,
-                "machine_name":   self.state.machines[machine_id].name,
-                "status":         new_status,
-                "rul":            rul,
-                "capacity_pct":   self._estimate_capacity(machine_id, new_status),
-                "machine_req":    self.state.machine_req,   # stale until capacity agent wired in
-                "breakeven_risk": new_status in ("OFFLINE", "DEGRADED"),
-            },
-            "dispatch_orders": self._build_dispatch_order(machine_id, new_status, rul),
-            "machine_statuses": [
-                {
-                    "id":             mid,
-                    "name":           m.name,
-                    "status":         new_status if mid == machine_id else m.status,
-                    "rul":            rul if mid == machine_id else m.rul,
-                    "available_time": (
-                        0.0 if (mid == machine_id and new_status == "OFFLINE")
-                        else m.base_time * 0.5 if (mid == machine_id and new_status == "DEGRADED")
-                        else m.available_time
-                    ),
-                    "base_time": m.base_time,
-                }
-                for mid, m in self.state.machines.items()
-            ],
-            "used_fallback": False,
-        }
-
-        # ── Step 5: Standard result processing ───────────────────────────────
+        # ── Step 6: Standard result processing ───────────────────────────────
         self._process_result(result, machine_id, old_rul)
 
     def _process_result(self, result: dict, machine_id: int, old_rul: float) -> None:
@@ -509,8 +439,8 @@ class FactoryApp(App):
 
     def action_reset_factory(self) -> None:
         """Reset all machines to ONLINE. Triggered by Ctrl+R."""
-        self.state.reset_all()
-        # Note: reset_call_count() removed — dummy oracle no longer in use.
+        self.state.reset_all()          # resets FactoryState (UI layer)
+        reset_agent_state()             # resets capacity_agent.MACHINES + OFFLINE_MODE
         self._refresh_ops_analytics()
         self._refresh_sensor_pane()
         self._refresh_capacity_pane()

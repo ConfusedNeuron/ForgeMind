@@ -61,7 +61,7 @@ class TestMatchScenario:
         ("bearing overheat on Machine 1",       "bearing_overheat"),
         ("temperature surge on spindle",         "bearing_overheat"),
         ("pressure spike in hydraulic line",     "pressure_surge"),
-        ("vibration and shaking on CNC-Alpha",   "vibration_fault"),
+        ("vibration and shaking on CNC-Alpha",   "vibration_anomaly"),
     ])
     def test_keyword_matches_correct_scenario(self, text, expected_key):
         scenario = match_scenario(text)
@@ -71,17 +71,18 @@ class TestMatchScenario:
         pressure_sensors = {"Xs2"}
         vibration_sensors = {"Xs7"}
         mapping = {
-            "bearing_overheat": bearing_sensors,
-            "pressure_surge":   pressure_sensors,
-            "vibration_fault":  vibration_sensors,
+            "bearing_overheat":  bearing_sensors,
+            "pressure_surge":    pressure_sensors,
+            "vibration_anomaly": vibration_sensors,
         }
         if expected_key in mapping:
             assert scenario["diagnostic_spike"].sensor_id in mapping[expected_key]
 
-    def test_match_returns_none_or_default_for_unknown_text(self):
+    def test_unknown_text_returns_general_fault_catchall(self):
         result = match_scenario("completely unrelated random text about nothing")
-        # Either returns None or a default — should not raise
-        assert result is None or isinstance(result, dict)
+        # Unknown input must always return the general_fault catch-all, never None
+        assert isinstance(result, dict)
+        assert result["diagnostic_spike"].sensor_id == "Xs0"  # general_fault spike
 
     def test_match_returns_dict(self):
         result = match_scenario("bearing temperature critical")
