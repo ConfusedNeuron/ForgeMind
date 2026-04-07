@@ -202,8 +202,19 @@ class FactoryState:
     def _build_window(self, history: list) -> np.ndarray:
         """
         Internal helper: build (50, 18) window from a 18-list history buffer.
-        Pads with random baseline values if insufficient data.
+
+        When insufficient sensor history exists, we fill with REALISTIC
+        baseline values from the DL engine's scaler (the scaler's midpoint
+        for each feature, in raw physical units).  This ensures that
+        predict_rul() receives data in the correct domain.
+
+        Previously this used np.random.uniform(0.3, 0.7) which produced
+        values the MinMaxScaler squashed to near-zero, causing every
+        prediction to return ~71.2 regardless of fault type.
         """
+        # Lazy-import to avoid circular dependency at module load time
+        from dl_engine.inference import get_healthy_baseline
+
         window = np.zeros((50, 18), dtype=np.float32)
         for sensor_idx in range(18):
             h = history[sensor_idx]
@@ -213,7 +224,10 @@ class FactoryState:
                 padding = [h[0]] * (50 - len(h))
                 window[:, sensor_idx] = np.array(padding + h, dtype=np.float32)
             else:
-                window[:, sensor_idx] = np.random.uniform(0.3, 0.7, size=50)
+                # No history at all — fill with realistic baseline
+                window[:, sensor_idx] = get_healthy_baseline(
+                    noise_std_frac=0.02
+                )[:, sensor_idx]
         return window
 
     # ─────────────────────────────────────────────────────────────────────────

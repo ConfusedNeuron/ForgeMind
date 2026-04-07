@@ -349,51 +349,52 @@ class FactoryApp(App):
 
     def _simulate_fault_reading(self, user_text: str) -> np.ndarray:
         """
-        Generate a realistic fault sensor reading based on user's fault description.
+        Generate a simulated sensor reading for sparkline display.
 
-        STUB ONLY — used to populate sparklines and saturation detection while
-        the diagnostic agent is not yet wired in. The values produced are
-        pre-scaled [0, 1] and are used for display purposes only.
-
-        On agent integration day, the diagnostic agent replaces the sensor
-        injection step entirely (see _run_chaos docstring). This method is
-        kept as a sparkline fallback but is no longer in the hot path.
+        IMPORTANT: Values MUST be in raw physical units (matching the DL
+        engine's scaler ranges), NOT normalised [0, 1].  The per-machine
+        sensor history feeds into get_machine_sensor_window(), which is
+        passed as the base_window to the diagnostic agent.  If these
+        values are normalised, the MinMaxScaler inside predict_rul()
+        collapses them to near-zero and the model always predicts ~71.
 
         Fault keyword → which sensor group spikes:
           temperature/heat/thermal → Xs4, Xs5  (indices 8, 9)
           vibration/bearing        → Xs0, Xs1  (indices 4, 5)
           pressure/hydraulic       → Xs8, Xs9  (indices 12, 13)
-          electric/power           → W0, W1    (indices 0, 1)
+          electric/power/overload  → W0, W1    (indices 0, 1)
           (default)                → Xs3, Xs4  (indices 7, 8)
         """
+        from dl_engine.inference import get_healthy_baseline, raw_value_for_scaled
+
         text_lower = user_text.lower()
 
-        # Baseline: normal operating range
-        reading = np.random.uniform(0.3, 0.6, size=18).astype(np.float32)
+        # Baseline: one row from the healthy baseline (raw physical units)
+        baseline_window = get_healthy_baseline(noise_std_frac=0.03)
+        reading = baseline_window[0].copy()  # single (18,) row
 
-        # Determine fault severity from keywords
+        # Determine fault severity from keywords → scaled position [0,1]
         if any(w in text_lower for w in ("critical", "severe", "major", "catastrophic", "emergency")):
-            spike_val = np.random.uniform(0.88, 0.99)
+            spike_scaled = np.random.uniform(0.88, 0.99)
         elif any(w in text_lower for w in ("high", "surge", "spike", "overload", "fault")):
-            spike_val = np.random.uniform(0.72, 0.88)
+            spike_scaled = np.random.uniform(0.72, 0.88)
         else:
-            spike_val = np.random.uniform(0.58, 0.72)
+            spike_scaled = np.random.uniform(0.58, 0.72)
 
         # Determine which sensors to spike
-        # Index mapping: W0-W3 = 0-3, Xs0-Xs13 = 4-17
         if any(w in text_lower for w in ("temp", "heat", "thermal", "overheat")):
             spike_indices = [8, 9]    # Xs4, Xs5
         elif any(w in text_lower for w in ("vibr", "bearing", "noise", "rattle")):
             spike_indices = [4, 5]    # Xs0, Xs1
         elif any(w in text_lower for w in ("press", "hydraul", "leak", "fluid")):
             spike_indices = [12, 13]  # Xs8, Xs9
-        elif any(w in text_lower for w in ("electric", "power", "volt", "current")):
+        elif any(w in text_lower for w in ("electric", "power", "volt", "current", "overload")):
             spike_indices = [0, 1]    # W0, W1
         else:
             spike_indices = [7, 8]    # Xs3, Xs4 (general)
 
         for idx in spike_indices:
-            reading[idx] = float(spike_val)
+            reading[idx] = raw_value_for_scaled(idx, float(spike_scaled))
 
         return reading
 
