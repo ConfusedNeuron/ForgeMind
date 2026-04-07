@@ -109,3 +109,89 @@ def predict_rul(sensor_tensor: np.ndarray) -> float:
         rul = _model(t).item()
 
     return max(0.0, rul)
+
+
+# ── Scaler-range utilities ────────────────────────────────────────────────────
+# These expose the scaler's learned min/max so other modules can produce
+# tensors in the correct raw-unit domain (the model fails silently on
+# synthetic [0,1] data because the scaler collapses it to near-zero).
+
+def get_healthy_baseline(noise_std_frac: float = 0.02) -> np.ndarray:
+    """
+    Build a (50, 18) tensor representing nominal operating conditions
+    in RAW physical units (pre-scaling).
+
+    Model probing revealed:
+      scaled=0.10 → RUL ≈ 71  (healthy)
+      scaled=0.50 → RUL ≈ 70  (mid-degradation)
+      scaled=0.90 → RUL ≈ 1   (end-of-life)
+
+    We use the low end of the scaler range (0.10) because the CNN-LSTM
+    associates low scaled values with early-in-life / healthy conditions.
+
+    Args:
+        noise_std_frac: noise magnitude as a fraction of each feature's range.
+                        0.02 means ±2% jitter.  Set to 0.0 for deterministic output.
+
+    Returns:
+        np.ndarray, shape (50, 18), dtype float32
+    """
+    if _scaler is None:
+        load_model()
+
+    HEALTHY_SCALED_POS = 0.10   # empirically gives highest RUL (~71)
+
+    lo   = _scaler.data_min_                     # (18,)
+    rng  = _scaler.data_range_                   # (18,)
+    healthy_raw = lo + HEALTHY_SCALED_POS * rng   # raw-unit "healthy" vector
+
+    baseline = np.tile(healthy_raw, (50, 1)).astype(np.float32)
+
+    if noise_std_frac > 0:
+        noise = np.random.normal(0, noise_std_frac * rng, size=(50, 18))
+        baseline += noise.astype(np.float32)
+
+    return baseline
+
+
+def raw_value_for_scaled(sensor_col: int, scaled_target: float) -> float:
+    """
+    Inverse-map a desired [0, 1] scaled value back to raw physical units.
+
+    Example: if the scaler learned  min=400, max=550 for column 8 (Xs4),
+    then raw_value_for_scaled(8, 0.95) → 400 + 0.95 * 150 = 542.5
+
+    The diagnostic agent stores spike_value in [0, 1]; this converts it
+    to the raw value that predict_rul()'s internal scaler.transform()
+    will map back to 0.95.
+
+    Args:
+        sensor_col:    column index 0–17 in the (50, 18) tensor
+        scaled_target: desired position in [0, 1] after scaling
+
+    Returns:
+        float — raw-unit value
+    """
+    if _scaler is None:
+        load_model()
+
+    lo  = _scaler.data_min_[sensor_col]
+    rng = _scaler.data_range_[sensor_col]
+    return float(lo + scaled_target * rng)
+
+
+def get_scaler_ranges() -> dict:
+    """
+    Return the scaler's learned min/max per feature for debugging.
+
+    Returns:
+        dict with keys 'min', 'max', 'range' — each a (18,) numpy array
+    """
+    if _scaler is None:
+        load_model()
+
+    return {
+        "min":   _scaler.data_min_.copy(),
+        "max":   _scaler.data_min_ + _scaler.data_range_,
+        "range": _scaler.data_range_.copy(),
+    }
