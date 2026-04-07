@@ -27,22 +27,13 @@ LOG_FILE = Path(__file__).resolve().parent.parent / "forgemind.log"
 _root = logging.getLogger("forgemind")
 
 if not _root.handlers:
-    # File handler — the primary output channel
+    # File handler — the ONLY output channel (keeps the TUI terminal clean)
     _fh = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
     _fh.setFormatter(logging.Formatter(
         "%(asctime)s │ %(name)-28s │ %(levelname)-7s │ %(message)s",
         datefmt="%H:%M:%S",
     ))
     _root.addHandler(_fh)
-
-    # Also mirror to stderr (visible when NOT running the TUI)
-    _sh = logging.StreamHandler()
-    _sh.setFormatter(logging.Formatter(
-        "%(asctime)s │ %(name)-28s │ %(levelname)-7s │ %(message)s",
-        datefmt="%H:%M:%S",
-    ))
-    _root.addHandler(_sh)
-
     _root.setLevel(logging.DEBUG)
 
     # Suppress propagation to root logger (avoids duplicate lines)

@@ -105,7 +105,7 @@ class FactoryApp(App):
         yield Header(show_clock=True)
         yield SensorFeedWidget(id="sensor-pane")
         yield CapacityWidget(id="capacity-pane")
-        yield RichLog(id="comms-pane", highlight=True, markup=True)
+        yield RichLog(id="comms-pane", highlight=True, markup=True, wrap=True)
         yield Input(
             id="chaos-input",
             placeholder="CHAOS ENGINE > Type a fault description and press Enter...",
