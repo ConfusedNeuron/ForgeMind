@@ -19,7 +19,8 @@ Run: python -m terminal.app
 """
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Input, RichLog
+from textual.screen import Screen
+from textual.widgets import Header, Footer, Input, RichLog, Static
 from textual.binding import Binding
 from textual import work
 
@@ -38,6 +39,39 @@ from .ops_analytics import (
     compute_shift_health,
     compute_degradation_leaderboard,
 )
+
+
+class SplashScreen(Screen):
+    """2.5-second ASCII art splash shown before the main dashboard."""
+
+    CSS = """
+    SplashScreen {
+        align: center middle;
+        background: $background;
+    }
+    #splash-art {
+        width: auto;
+        content-align: center middle;
+        text-align: center;
+    }
+    """
+
+    def compose(self) -> ComposeResult:
+        try:
+            import pyfiglet
+            art = pyfiglet.figlet_format("ForgeMind", font="slant")
+        except ImportError:
+            art = "FORGEMIND"
+        subtitle = (
+            "\n[dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]\n"
+            "[dim]  Predictive Maintenance Intelligence Platform  [/dim]\n"
+            "[dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]\n"
+            "\n[dim]Initializing factory systems...[/dim]"
+        )
+        yield Static(f"[bold green]{art}[/bold green]{subtitle}", id="splash-art", markup=True)
+
+    def on_mount(self) -> None:
+        self.set_timer(2.5, self.app.pop_screen)
 
 
 class FactoryApp(App):
@@ -108,13 +142,14 @@ class FactoryApp(App):
         yield Footer()
 
     def on_mount(self) -> None:
-        """Initialize display on startup."""
+        """Initialize display on startup, then overlay the splash screen."""
         self._refresh_ops_analytics()   # compute initial (all-nominal) analytics
         self._refresh_sensor_pane()
         self._refresh_capacity_pane()
         self._log("System", "Factory simulation online. All machines nominal.")
         self._log("System", "Type a fault description below to inject chaos.")
         self._log("System", "Keyboard: Ctrl+R = Reset | Ctrl+Q = Quit")
+        self.push_screen(SplashScreen())
 
     # ═════════════════════════════════════════════════════════════════════════
     # INPUT HANDLER

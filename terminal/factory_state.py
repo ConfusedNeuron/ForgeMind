@@ -86,6 +86,13 @@ class FactoryState:
     ))
     degradation_leaderboard: list = field(default_factory=list)
 
+    def __post_init__(self):
+        """Seed all machine sensor histories with baseline noise so sparklines show on startup."""
+        for mid in range(1, 6):
+            for _ in range(20):
+                baseline = np.random.uniform(0.3, 0.6, size=18).astype(np.float32)
+                self.push_machine_sensor_reading(mid, baseline)
+
     # ─────────────────────────────────────────────────────────────────────────
     # STATE UPDATE
     # ─────────────────────────────────────────────────────────────────────────

@@ -38,29 +38,19 @@ def mini_sparkline(values: list, width: int = 20) -> str:
     return "".join(chars)
 
 
-def status_bar(status: str) -> str:
-    """Visual bar for machine status."""
-    return {
-        "ONLINE":   "████████",
-        "DEGRADED": "████░░░░",
-        "OFFLINE":  "░░░░░░░░",
-    }.get(status, "????????")
-
-
-def status_color(status: str) -> str:
-    """Color for machine status."""
-    return {
-        "ONLINE":   "green",
-        "DEGRADED": "yellow",
-        "OFFLINE":  "red",
-    }.get(status, "white")
+def rul_bar(rul: float, width: int = 20) -> str:
+    """Generate a filled progress bar scaled to RUL (max display = 200 cycles)."""
+    max_rul = 200.0
+    filled  = int((min(rul, max_rul) / max_rul) * width)
+    filled  = max(0, min(filled, width))
+    return "█" * filled + "░" * (width - filled)
 
 
 def rul_color(rul: float) -> str:
-    """Color based on RUL value."""
-    if rul > 30:
+    """Color based on RUL value — green >100, amber 15-100, red <15."""
+    if rul > 100:
         return "green"
-    elif rul > 15:
+    elif rul >= 15:
         return "yellow"
     else:
         return "red"
@@ -68,9 +58,9 @@ def rul_color(rul: float) -> str:
 
 def rul_label(rul: float) -> str:
     """Text label based on RUL value."""
-    if rul > 30:
+    if rul > 100:
         return "HEALTHY"
-    elif rul > 15:
+    elif rul >= 15:
         return "WARNING"
     else:
         return "CRITICAL"
@@ -183,21 +173,27 @@ class CapacityWidget(Static):
         lines.append(f"  {divider(42)}")
         lines.append("")
 
-        # ── SECTION 2: Machine bars ───────────────────────────────────────────
+        # ── SECTION 2: Machine bars (RUL-based progress bars) ────────────────
         for mid, machine in state.machines.items():
-            bar   = status_bar(machine.status)
-            color = status_color(machine.status)
-            lines.append(
-                f"  Machine {mid}: [{color}]{bar} {machine.status:>8s}[/{color}]"
-                f"  RUL: {machine.rul:.0f}"
-            )
+            bar   = rul_bar(machine.rul)
+            color = rul_color(machine.rul)
+            if machine.rul < 15:
+                lines.append(
+                    f"  [blink][bold red]Machine {mid}: {machine.name:<14s}[/bold red][/blink]"
+                    f"  [{color}]{bar}[/{color}]  RUL: {machine.rul:.0f}"
+                )
+            else:
+                lines.append(
+                    f"  Machine {mid}: {machine.name:<14s}"
+                    f"  [{color}]{bar}[/{color}]  RUL: {machine.rul:.0f}"
+                )
 
         # ── SECTION 3: Capacity metrics ───────────────────────────────────────
         lines.append("")
-        risk_flag = " [bold red]⚠ CRITICAL[/bold red]" if state.breakeven_risk else ""
+        spdt_color = "red" if state.machine_req >= 1.0 else "green"
         lines.append(
             f"  Capacity: {state.capacity_pct:.0f}% | "
-            f"ΣPD/T: {state.machine_req:.2f}{risk_flag}"
+            f"ΣPD/T: [{spdt_color}]{state.machine_req:.2f}[/{spdt_color}]"
         )
 
         # ── SECTION 4: Maintenance queue ─────────────────────────────────────
@@ -245,10 +241,10 @@ AGENT_COLORS = {
     "System":           "dim",
     "Chaos Engine":     "bold magenta",
     "Diagnostic Agent": "cyan",
-    "DL Oracle":        "bold green",
-    "Capacity Agent":   "yellow",
-    "Floor Manager":    "bold red",
-    "Ops Alert":        "bold red",      # ← new: cliff detection, saturation
+    "DL Oracle":        "yellow",
+    "Capacity Agent":   "white",
+    "Floor Manager":    "bold green",
+    "Ops Alert":        "bold red",
 }
 
 
