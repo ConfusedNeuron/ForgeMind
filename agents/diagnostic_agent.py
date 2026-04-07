@@ -1,8 +1,8 @@
 # agents/diagnostic_agent.py
 
 import os
+import time
 from pathlib import Path
-import logging
 
 
 import numpy as np
@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from .schemas import SensorSpike, FaultSeverity
 from .prompts import DIAGNOSTIC_SYSTEM_PROMPT
+from .log_config import get_logger
 
 
 # Load environment variables
@@ -29,6 +30,9 @@ print(f"Loaded API key for DIAGNOSTIC agent: {bool(api_key)}") # comment during 
 #logging.info("Using GEMINI_API_KEY_DIAGNOSTIC") #uncomment during production
 # Initialize client
 client = genai.Client(api_key=api_key)
+
+# ── Structured logger ──────────────────────────────────────────────────────────
+log = get_logger("diagnostic")
 
 
 # ── Constants ──────────────────────────────────────────────────────────────────
@@ -157,9 +161,10 @@ def _validate_domain(spike: SensorSpike) -> tuple[bool, str]:
     if early_positions and len(early_positions) == len(spike.affected_window_positions):
         # All positions are in the first half — likely Gemini misunderstood the window
         # Still accept it (not a hard failure), but log a warning
-        print(
-            f"  [Diagnostic] WARNING: all positions are early in window "
-            f"({early_positions}). Fault may not affect recent readings strongly."
+        log.warning(
+            "All spike positions are early in window (%s). "
+            "Fault may not affect recent readings strongly.",
+            early_positions,
         )
 
     return True, ""
@@ -178,33 +183,114 @@ def _get_fallback(user_text: str) -> SensorSpike:
     for keyword in FALLBACK_KEYWORD_ORDER:
         if keyword in text_lower:
             spike = FALLBACK_SPIKES[keyword]
-            print(f"  [Diagnostic] Fallback matched keyword: '{keyword}' → {spike.sensor_id}")
+            log.info("Fallback matched keyword: '%s' → %s", keyword, spike.sensor_id)
             return spike
 
     # No keyword matched — use default
-    print("  [Diagnostic] No keyword matched. Using default fallback.")
+    log.info("No keyword matched. Using default fallback.")
     return FALLBACK_SPIKES["default"]
 
 
-# ── Tensor injection ───────────────────────────────────────────────────────────
+# ── Sensor correlation map ─────────────────────────────────────────────────────
+# When the primary sensor spikes, correlated sensors also degrade.
+# Model probing showed single-sensor spikes barely move RUL, but 3+ sensor
+# ramps produce dramatic drops (3-sensor ramp: RUL 71 → 8).
+#
+# CRITICAL: the CNN-LSTM is primarily sensitive to Xs2 (col 6) and Xs3 (col 7).
+# These are the key degradation indicators in the N-CMAPSS turbofan data.
+# Every fault type MUST include Xs2/Xs3 at some intensity — physically all
+# machine faults eventually stress these thermal/pressure channels.
+#
+# Intensity hierarchy:
+#   0.80–0.90 = direct thermal/pressure fault (strongest RUL impact)
+#   0.55–0.70 = mechanically coupled fault (moderate impact)
+#   0.35–0.50 = indirect/operating-condition fault (mild impact)
+#
+# Format: primary_sensor → [(correlated_sensor, intensity_fraction), ...]
+SENSOR_CORRELATIONS: dict[str, list[tuple[str, float]]] = {
+    # Temperature faults → directly stress key degradation sensors
+    "Xs4":  [("Xs2", 0.85), ("Xs3", 0.78)],
+    "Xs5":  [("Xs2", 0.82), ("Xs3", 0.75)],
+    # Pressure faults → co-located thermal stress
+    "Xs2":  [("Xs3", 0.82), ("Xs6", 0.65)],
+    "Xs6":  [("Xs2", 0.78), ("Xs3", 0.72)],
+    # Bearing/fan faults → friction heat propagates to thermal sensors
+    "Xs0":  [("Xs2", 0.75), ("Xs3", 0.68), ("Xs1", 0.70)],
+    "Xs1":  [("Xs2", 0.75), ("Xs3", 0.68), ("Xs0", 0.70)],
+    # Vibration/enthalpy → mechanical stress raises temps
+    "Xs7":  [("Xs2", 0.78), ("Xs3", 0.70), ("Xs0", 0.45)],
+    # Speed/RPM faults → off-design operation strains thermal path
+    "Xs8":  [("Xs2", 0.72), ("Xs3", 0.65), ("Xs9", 0.70)],
+    "Xs9":  [("Xs2", 0.72), ("Xs3", 0.65), ("Xs8", 0.70)],
+    "Xs10": [("Xs2", 0.68), ("Xs3", 0.62), ("Xs4", 0.55)],
+    "Xs13": [("Xs2", 0.68), ("Xs3", 0.62), ("Xs4", 0.50)],
+    # Coolant/bleed faults → reduced cooling raises degradation temps
+    "Xs12": [("Xs2", 0.75), ("Xs3", 0.68), ("Xs11", 0.60)],
+    "Xs11": [("Xs2", 0.72), ("Xs3", 0.65), ("Xs12", 0.55)],
+    # Operating condition faults → affect thermal equilibrium
+    "W0":   [("Xs2", 0.70), ("Xs3", 0.62), ("W2", 0.40)],
+    "W1":   [("Xs2", 0.65), ("Xs3", 0.58)],
+    "W2":   [("Xs2", 0.68), ("Xs3", 0.60)],
+    "W3":   [("Xs2", 0.70), ("Xs3", 0.62)],
+}
+
 
 def _inject_spike(base_window: np.ndarray, spike: SensorSpike) -> np.ndarray:
     """
-    Physically writes the spike values into a COPY of base_window.
-    Never modifies the original array.
+    Inject a fault into a COPY of base_window using a physics-informed
+    multi-sensor RAMP pattern.
+
+    Model probing revealed:
+      - Single-sensor step spikes barely move RUL (~0.5 cycle change)
+      - 3-sensor ramps across the full window produce dramatic drops
+        (71 → 8 RUL for a 3-sensor ramp from 0.1 → 0.95)
+
+    Strategy:
+      1. PRIMARY sensor: ramp from its current baseline value to the
+         spike_value (in raw units) across the full 50-step window.
+      2. CORRELATED sensors: same ramp but scaled by an intensity
+         fraction (e.g. 0.70 × spike_value).
+
+    This mimics the gradual multi-sensor degradation patterns the
+    CNN-LSTM was trained on (N-CMAPSS turbofan data).
 
     Args:
-        base_window: (50, 18) float32 array — original sensor readings
+        base_window: (50, 18) float32 array — sensor readings in raw units
         spike:       validated SensorSpike object
 
     Returns:
-        (50, 18) float32 array — copy with spike injected at correct column/rows
+        (50, 18) float32 array — copy with correlated ramp injected
     """
-    injected = base_window.copy()
-    col = SENSOR_TO_COL[spike.sensor_id]
+    from dl_engine.inference import raw_value_for_scaled
 
-    for pos in spike.affected_window_positions:
-        injected[pos, col] = np.float32(spike.spike_value)
+    injected = base_window.copy()
+    primary_col = SENSOR_TO_COL[spike.sensor_id]
+
+    # ── Primary sensor: full ramp ─────────────────────────────────────────
+    raw_start = float(injected[0, primary_col])           # current baseline
+    raw_end   = raw_value_for_scaled(primary_col, spike.spike_value)
+    ramp = np.linspace(raw_start, raw_end, 50).astype(np.float32)
+    injected[:, primary_col] = ramp
+
+    log.debug(
+        "Spike inject: %s (col %d) ramp %.1f → %.1f (scaled %.2f → %.2f)",
+        spike.sensor_id, primary_col, raw_start, raw_end, 0.10, spike.spike_value,
+    )
+
+    # ── Correlated sensors: scaled ramp ───────────────────────────────────
+    correlations = SENSOR_CORRELATIONS.get(spike.sensor_id, [])
+    for corr_sensor_id, intensity in correlations:
+        corr_col = SENSOR_TO_COL[corr_sensor_id]
+        corr_start = float(injected[0, corr_col])
+        corr_target_scaled = spike.spike_value * intensity
+        corr_end = raw_value_for_scaled(corr_col, corr_target_scaled)
+        corr_ramp = np.linspace(corr_start, corr_end, 50).astype(np.float32)
+        injected[:, corr_col] = corr_ramp
+
+        log.debug(
+            "  + correlated %s (col %d) ramp → scaled %.2f (intensity %.0f%%)",
+            corr_sensor_id, corr_col, corr_target_scaled, intensity * 100,
+        )
 
     return injected
 
@@ -255,43 +341,49 @@ def translate_fault_to_tensor(
 
         # ── Call Gemini ───────────────────────────────────────────────────────
         try:
+            t_call = time.time()
+            log.info("Gemini call attempt %d/%d  model=gemini-2.5-flash", attempt + 1, MAX_RETRIES + 1)
+
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt_contents,
                 config=types.GenerateContentConfig(
                     response_mime_type="application/json",
                     response_schema=SensorSpike,
-                    thinking_config=types.ThinkingConfig(thinking_budget=0), #uncomment to enable Gemini "thinking" (deliberation) between retries. For debugging, we set it to 0 to see immediate responses.
+                    thinking_config=types.ThinkingConfig(thinking_budget=0),
                 ),
             )
+
+            api_ms = round((time.time() - t_call) * 1000, 1)
+            log.info("Gemini responded in %.0fms", api_ms)
 
             candidate = SensorSpike.model_validate_json(response.text)
 
             is_valid, error = _validate_domain(candidate)
             if is_valid:
                 spike = candidate
-                print(
-                    f"  [Diagnostic] ✓ Attempt {attempt + 1}: "
-                    f"sensor={spike.sensor_id}, value={spike.spike_value:.2f}, "
-                    f"severity={spike.fault_severity}, "
-                    f"positions={spike.affected_window_positions}"
+                log.info(
+                    "✓ Attempt %d ACCEPTED: sensor=%s  value=%.2f  severity=%s  positions=%s",
+                    attempt + 1, spike.sensor_id, spike.spike_value,
+                    spike.fault_severity, spike.affected_window_positions,
                 )
                 break
             else:
                 last_error = error
-                print(f"  [Diagnostic] ✗ Attempt {attempt + 1} domain fail: {error}")
+                log.warning("✗ Attempt %d domain validation fail: %s", attempt + 1, error)
 
         except ValidationError as e:
             last_error = f"Pydantic validation error: {e}"
-            print(f"  [Diagnostic] ✗ Attempt {attempt + 1} Pydantic fail: {e}")
+            log.warning("✗ Attempt %d Pydantic fail: %s", attempt + 1, e)
 
         except Exception as e:
             last_error = f"API error: {e}"
-            print(f"  [Diagnostic] ✗ Attempt {attempt + 1} API fail: {e}")
+            log.error("✗ Attempt %d API fail: %s", attempt + 1, e)
 
     # ── Fallback if all attempts failed ───────────────────────────────────────
     used_fallback = False
     if spike is None:
+        log.warning("All %d Gemini attempts failed. Using deterministic fallback.", MAX_RETRIES + 1)
         spike = _get_fallback(user_text)
         used_fallback = True
 

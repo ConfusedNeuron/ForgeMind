@@ -1,13 +1,13 @@
-# agents/floor_manager.py
-
 from __future__ import annotations
 
 import os
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from google import genai
 
 from .prompts import FLOOR_MANAGER_SYSTEM_PROMPT
+from .log_config import get_logger
 
 # Load env — same pattern as diagnostic_agent.py
 load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
@@ -19,6 +19,8 @@ if not api_key:
 print(f"Loaded API key for FLOOR MANAGER agent: {bool(api_key)}")
 
 client = genai.Client(api_key=api_key)
+
+log = get_logger("floor_manager")
 
 MAX_RETRIES = 1   # One retry — if Gemini fails prose twice, fallback is equally good
 
@@ -140,29 +142,33 @@ def issue_dispatch_orders(capacity_report: dict) -> tuple[str, bool]:
             )
 
         try:
+            t_call = time.time()
+            log.info("Gemini call attempt %d/%d  model=gemini-2.5-flash", attempt + 1, MAX_RETRIES + 1)
+
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
                 contents=prompt,
             )
 
+            api_ms = round((time.time() - t_call) * 1000, 1)
             text = response.text.strip()
             is_valid, error = _validate_output(text, capacity_report)
 
             if is_valid:
-                print(
-                    f"  [Floor Manager] ✓ Attempt {attempt + 1}: "
-                    f"{text[:80]}{'...' if len(text) > 80 else ''}"
+                log.info(
+                    "✓ Attempt %d ACCEPTED  %.0fms  %s...",
+                    attempt + 1, api_ms, text[:80],
                 )
                 return text, False
 
             else:
                 last_error = error
-                print(f"  [Floor Manager] ✗ Attempt {attempt + 1} validation fail: {error}")
+                log.warning("✗ Attempt %d validation fail (%.0fms): %s", attempt + 1, api_ms, error)
 
         except Exception as e:
             last_error = str(e)
-            print(f"  [Floor Manager] ✗ Attempt {attempt + 1} API fail: {e}")
+            log.error("✗ Attempt %d API fail: %s", attempt + 1, e)
 
     # All attempts failed — use template
-    print(f"  [Floor Manager] Using template fallback for status={capacity_report['status']}")
+    log.warning("All %d Gemini attempts failed. Using template fallback for status=%s", MAX_RETRIES + 1, capacity_report['status'])
     return _template_fallback(capacity_report), True
