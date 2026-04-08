@@ -124,10 +124,8 @@ def check_sensor_saturation(
         List of (sensor_name, "MAX" or "ZERO") for saturated sensors.
         Empty list = all sensors healthy.
     """
-    sensor_names = (
-        [f"W{i}" for i in range(4)] +
-        [f"Xs{i}" for i in range(14)]
-    )
+    from .layout import SENSOR_DISPLAY_NAMES
+    sensor_names = SENSOR_DISPLAY_NAMES
     saturated = []
 
     for idx, history in enumerate(sensor_history):

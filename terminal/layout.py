@@ -19,6 +19,35 @@ from datetime import datetime
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# BUSINESS-FRIENDLY SENSOR NAMES
+# ─────────────────────────────────────────────────────────────────────────────
+# Maps the 18 N-CMAPSS tensor columns to names a factory manager understands.
+# Internal pipeline still uses W0/Xs0 etc — this is display-only.
+# Order matches tensor column order: [W0, W1, W2, W3, Xs0, Xs1, ... Xs13]
+
+SENSOR_DISPLAY_NAMES = [
+    "Motor RPM",       # W0   (col 0)  — drive speed
+    "Feed Rate",       # W1   (col 1)  — material feed
+    "Power kW",        # W2   (col 2)  — electrical draw
+    "Coolant Flow",    # W3   (col 3)  — cooling rate
+    "Vibration X",     # Xs0  (col 4)  — X-axis vibration
+    "Vibration Y",     # Xs1  (col 5)  — Y-axis vibration
+    "Bearing Temp",    # Xs2  (col 6)  — KEY degradation sensor
+    "Motor Temp",      # Xs3  (col 7)  — KEY degradation sensor
+    "Oil Pressure",    # Xs4  (col 8)  — lubricant pressure
+    "Oil Temp",        # Xs5  (col 9)  — lubricant temperature
+    "Spindle Load",    # Xs6  (col 10) — tool load %
+    "Torque",          # Xs7  (col 11) — applied torque
+    "Hydraulic PSI",   # Xs8  (col 12) — hydraulic pressure
+    "Coolant Temp",    # Xs9  (col 13) — coolant temperature
+    "Ambient Temp",    # Xs10 (col 14) — environment temp
+    "Current Amps",    # Xs11 (col 15) — electrical current
+    "Acoustic dB",     # Xs12 (col 16) — noise level
+    "Cycle Time",      # Xs13 (col 17) — time per cycle
+]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PURE HELPER FUNCTIONS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -52,6 +81,31 @@ def status_bar(status: str) -> str:
         "DEGRADED": "████░░░░",
         "OFFLINE":  "░░░░░░░░",
     }.get(status, "????????")
+
+
+def rul_bar(rul: float, width: int = 20) -> tuple:
+    """
+    Proportional fill bar mapped to 0–100 RUL scale.
+
+    Returns (bar_string, color_string) where:
+      - bar_string is exactly `width` chars of █ / ░
+      - color_string is 'green', 'yellow', or 'red'
+
+    Color thresholds:
+      RUL > 30  → green   ████████████████████
+      RUL 15-30 → yellow  ██████████░░░░░░░░░░
+      RUL ≤ 15  → red     ████░░░░░░░░░░░░░░░░
+    """
+    filled = max(0, min(width, int(rul / 100.0 * width)))
+    empty  = width - filled
+    bar    = "█" * filled + "░" * empty
+    if rul > 30:
+        color = "green"
+    elif rul > 15:
+        color = "yellow"
+    else:
+        color = "red"
+    return bar, color
 
 
 def status_color(status: str) -> str:
@@ -128,23 +182,19 @@ class SensorFeedWidget(Static):
             "",
         ]
 
-        sensor_names = (
-            [f"W{i}" for i in range(4)] +
-            [f"Xs{i}" for i in range(14)]
-        )
-        for i, name in enumerate(sensor_names):
+        for i, name in enumerate(SENSOR_DISPLAY_NAMES):
             history = machine_sensor_history[i] if machine_sensor_history[i] else state.sensor_history[i]
             if history:
                 spark = mini_sparkline(history[-20:])
                 if name in saturated_names:
                     lines.append(
-                        f"  {name:>4s} [{rul_color(0)}]{spark}[/{rul_color(0)}]"
-                        f" [bold red]⚠ DATA QUALITY[/bold red]"
+                        f"  {name:>14s} [{rul_color(0)}]{spark}[/{rul_color(0)}]"
+                        f" [bold red]⚠[/bold red]"
                     )
                 else:
-                    lines.append(f"  {name:>4s} {spark}")
+                    lines.append(f"  {name:>14s} {spark}")
             else:
-                lines.append(f"  {name:>4s} ────────────────────")
+                lines.append(f"  {name:>14s} {mini_sparkline([])}")
 
         if saturated_sensors:
             lines.append("")
@@ -187,19 +237,26 @@ class CapacityWidget(Static):
 
         # ── SECTION 2: Machine bars ───────────────────────────────────────────
         for mid, machine in state.machines.items():
-            bar   = status_bar(machine.status)
-            color = status_color(machine.status)
+            bar, bar_color = rul_bar(machine.rul)
+            if machine.status == "OFFLINE":
+                status_markup = "[blink bold red]OFFLINE[/blink bold red]"
+            elif machine.status == "DEGRADED":
+                status_markup = "[yellow]DEGRADED[/yellow]"
+            else:
+                status_markup = "[green]ONLINE[/green]"
             lines.append(
-                f"  Machine {mid}: [{color}]{bar} {machine.status:>8s}[/{color}]"
-                f"  RUL: {machine.rul:.0f}"
+                f"  {machine.name:<16s} [{bar_color}]{bar}[/{bar_color}]"
+                f" {status_markup}"
+                f"  RUL: [{bar_color}]{machine.rul:.0f}[/{bar_color}]"
             )
 
         # ── SECTION 3: Capacity metrics ───────────────────────────────────────
         lines.append("")
-        risk_flag = " [bold red]⚠ CRITICAL[/bold red]" if state.breakeven_risk else ""
+        spdt_color = "bold red" if state.breakeven_risk else "bold green"
+        risk_flag  = " [bold red]⚠ CRITICAL[/bold red]" if state.breakeven_risk else ""
         lines.append(
             f"  Capacity: {state.capacity_pct:.0f}% | "
-            f"ΣPD/T: {state.machine_req:.2f}{risk_flag}"
+            f"ΣPD/T: [{spdt_color}]{state.machine_req:.2f}[/{spdt_color}]{risk_flag}"
         )
 
         # ── SECTION 4: Maintenance queue ──────────────────────────────────────
@@ -243,12 +300,12 @@ class CapacityWidget(Static):
 # ─────────────────────────────────────────────────────────────────────────────
 
 AGENT_COLORS = {
-    "System":           "dim",
+    "System":           "dim white",
     "Chaos Engine":     "bold magenta",
-    "Diagnostic Agent": "cyan",
-    "DL Oracle":        "bold green",
-    "Capacity Agent":   "yellow",
-    "Floor Manager":    "bold red",
+    "Diagnostic Agent": "bold cyan",
+    "DL Oracle":        "bold yellow",
+    "Capacity Agent":   "white",
+    "Floor Manager":    "bold green",
     "Ops Alert":        "bold red",
 }
 

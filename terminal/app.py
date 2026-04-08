@@ -19,9 +19,10 @@ Run: python -m terminal.app
 """
 
 from textual.app import App, ComposeResult
-from textual.widgets import Header, Footer, Input, RichLog
+from textual.widgets import Header, Footer, Input, RichLog, Static
 from textual.binding import Binding
 from textual import work
+import pyfiglet
 
 import re
 import numpy as np
@@ -45,34 +46,68 @@ from .ops_analytics import (
 )
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TITLE BANNER — permanent header, Claude Code style
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TitleBanner(Static):
+    """Compact ASCII art title that sits at the top of the dashboard."""
+
+    DEFAULT_CSS = """
+    TitleBanner {
+        height: auto;
+        width: 1fr;
+        padding: 0 1;
+        background: #111111;
+        color: #ff7b54;
+        text-align: center;
+        column-span: 2;
+    }
+    """
+
+    def on_mount(self) -> None:
+        try:
+            art = pyfiglet.figlet_format("FORGEMIND", font="ansi_shadow")
+        except Exception:
+            art = "  F O R G E M I N D\n"
+        content = (
+            f"[bold #ff7b54]{art}[/bold #ff7b54]"
+            "[dim #888888]AGENTIC PREDICTIVE MAINTENANCE · INDUSTRY 4.0 · v1.0[/dim #888888]"
+        )
+        self.update(content)
+
+
 class FactoryApp(App):
     """Predictive maintenance terminal dashboard."""
 
     CSS = """
     Screen {
         layout: grid;
-        grid-size: 2 3;
-        grid-rows: 1fr 1fr 3;
+        grid-size: 2 4;
+        grid-rows: auto 1fr 1fr 3;
     }
 
     #sensor-pane {
         column-span: 1;
         row-span: 1;
-        border: solid green;
+        border: solid #555555;
+        border-title-color: green;
         padding: 1;
     }
 
     #capacity-pane {
         column-span: 1;
         row-span: 1;
-        border: solid blue;
+        border: solid #555555;
+        border-title-color: cyan;
         padding: 1;
     }
 
     #comms-pane {
         column-span: 2;
         row-span: 1;
-        border: solid yellow;
+        border: solid #555555;
+        border-title-color: #ff7b54;
         padding: 1;
     }
 
@@ -81,14 +116,6 @@ class FactoryApp(App):
         row-span: 1;
         dock: bottom;
     }
-
-    .status-online   { color: green; }
-    .status-degraded { color: yellow; }
-    .status-offline  { color: red; }
-
-    .rul-healthy  { color: green; }
-    .rul-warning  { color: yellow; }
-    .rul-critical { color: red; }
     """
 
     BINDINGS = [
@@ -102,7 +129,7 @@ class FactoryApp(App):
         self._machine_cycle = 0
 
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=True)
+        yield TitleBanner()
         yield SensorFeedWidget(id="sensor-pane")
         yield CapacityWidget(id="capacity-pane")
         yield RichLog(id="comms-pane", highlight=True, markup=True, wrap=True)
@@ -333,11 +360,11 @@ class FactoryApp(App):
                 return mid
 
         name_map = {
-            "alpha":       1, "cnc-alpha":    1,
-            "beta":        2, "cnc-beta":     2,
-            "gamma":       3, "press-gamma":  3,
-            "delta":       4, "lathe-delta":  4,
-            "epsilon":     5, "mill-epsilon": 5,
+            "metal press":     1, "press":         1, "stamping":  1,
+            "paint":           2, "coat":          2, "coating":   2,
+            "pcb":             3, "smt":           3, "board":     3,
+            "assembly":        4, "final":         4, "merge":     4,
+            "qc":              5, "pack":          5, "test":      5, "quality": 5,
         }
         text_lower = text.lower()
         for name, mid in name_map.items():

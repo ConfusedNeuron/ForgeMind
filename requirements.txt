@@ -14,3 +14,4 @@ pytest-cov>=5.0
 pydantic==2.12.5
 dotenv==0.9.9
 google-genai==1.70.0
+pyfiglet==1.0.4
