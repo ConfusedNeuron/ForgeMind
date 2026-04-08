@@ -33,19 +33,28 @@ class FactoryState:
     """
     Global factory state shared across all 4 panes.
 
+    Galanz-style microwave oven factory — Inverted-Y topology:
+
+        Metal Press (1) ──↘
+                           → Final Assembly (4) → QC & Pack (5)
+        Paint & Coat (2) ─↗
+        PCB Line (3) ────↗
+
     5 Machines:
-        1: CNC-Alpha       3: Press-Gamma
-        2: CNC-Beta        4: Lathe-Delta
-                           5: Mill-Epsilon
+        1: Metal Press      — stamps chassis panels & cavity shells
+        2: Paint & Coat     — electrostatic powder coating line
+        3: PCB Line         — SMT board assembly (control + power boards)
+        4: Final Assembly   — merge point: chassis + board + magnetron
+        5: QC & Pack        — burn-in test, leak test, boxing
     """
 
     # ── Core machine state ───────────────────────────────────────────────────
     machines: dict = field(default_factory=lambda: {
-        1: MachineState(1, "CNC-Alpha"),
-        2: MachineState(2, "CNC-Beta"),
-        3: MachineState(3, "Press-Gamma"),
-        4: MachineState(4, "Lathe-Delta"),
-        5: MachineState(5, "Mill-Epsilon"),
+        1: MachineState(1, "Metal Press"),
+        2: MachineState(2, "Paint & Coat"),
+        3: MachineState(3, "PCB Line"),
+        4: MachineState(4, "Final Assembly"),
+        5: MachineState(5, "QC & Pack"),
     })
 
     # ── Shared sensor ring buffer (used for the active machine sparklines) ───
@@ -254,22 +263,4 @@ class FactoryState:
         for m in self.machines.values():
             m.status         = "ONLINE"
             m.rul            = 999.0
-            m.available_time = m.base_time
-
-        self.capacity_pct   = 100.0
-        self.machine_req    = 0.0
-        self.breakeven_risk = False
-
-        # Clear per-machine histories so reliability resets to CALIBRATING
-        for mid in self.rul_history:
-            self.rul_history[mid] = []
-        for mid in self.per_machine_sensor_history:
-            self.per_machine_sensor_history[mid] = [[] for _ in range(18)]
-        for i in range(18):
-            self.sensor_history[i] = []
-
-        self.maintenance_schedule    = []
-        self.degradation_leaderboard = []
-        self.shift_health = (
-            "NOMINAL  —  All 5 machines running. Capacity: 100%", "green"
-        )
+            m.available_tim
