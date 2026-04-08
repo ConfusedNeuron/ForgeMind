@@ -177,11 +177,13 @@ class TestWindowBuilding:
         w = state.get_sensor_window()
         assert w.dtype == np.float32
 
-    def test_get_sensor_window_empty_history_uses_random_baseline(self, state):
+    def test_get_sensor_window_empty_history_uses_realistic_baseline(self, state):
         w = state.get_sensor_window()
-        # With empty history, values should be in [0.3, 0.7]
-        assert float(w.min()) >= 0.3
-        assert float(w.max()) <= 0.7
+        # With empty history, values come from the DL scaler's healthy baseline
+        # (raw physical units like altitude=10-35K, temps=400-600+)
+        # instead of the old [0.3, 0.7] synthetic range
+        assert np.all(np.isfinite(w)), "Baseline should contain finite values"
+        assert float(w.max()) > 1.0, "Raw-unit baseline should have values > 1.0"
 
     def test_get_sensor_window_with_full_history_uses_real_data(self, state):
         vals = np.linspace(0.1, 0.9, 18, dtype=np.float32)

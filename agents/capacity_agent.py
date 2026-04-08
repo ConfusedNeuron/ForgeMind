@@ -20,46 +20,54 @@ HEALTHY_BASELINE_REQ  = _HEALTHY_TOTAL_PD / _HEALTHY_TOTAL_T  # = 14.875
 BREAKEVEN_THRESHOLD   = HEALTHY_BASELINE_REQ * 1.07           # ≈ 15.92
 
 # ── Machine registry ──────────────────────────────────────────────────────────
+# Galanz-style microwave oven factory — Inverted-Y topology:
+#
+#   Metal Press (1) ──↘
+#                       → Final Assembly (4) → QC & Pack (5)
+#   Paint & Coat (2) ─↗
+#   PCB Line (3) ────↗
+#
 # This is mutable state. Each update_capacity() call modifies it in-place.
 # reset_all() restores it to starting values.
 # Machine IDs are 1-indexed (1–5) to match what the professor says: "Machine 4"
+# Total product_demand = 595 (preserved for MIOM ΣPD/T math consistency)
 MACHINES: dict[int, dict] = {
     1: {
-        "name": "CNC-Alpha",
+        "name": "Metal Press",
         "base_time": 8.0,
-        "product_demand": 120,
+        "product_demand": 140,       # high-throughput stamping
         "available_time": 8.0,
         "rul": 999.0,
         "status": "ONLINE",
     },
     2: {
-        "name": "CNC-Beta",
+        "name": "Paint & Coat",
         "base_time": 8.0,
-        "product_demand": 95,
+        "product_demand": 110,       # slower coating process
         "available_time": 8.0,
         "rul": 999.0,
         "status": "ONLINE",
     },
     3: {
-        "name": "Press-Gamma",
+        "name": "PCB Line",
         "base_time": 8.0,
-        "product_demand": 140,
+        "product_demand": 125,       # SMT board assembly
         "available_time": 8.0,
         "rul": 999.0,
         "status": "ONLINE",
     },
     4: {
-        "name": "Lathe-Delta",
+        "name": "Final Assembly",
         "base_time": 8.0,
-        "product_demand": 110,
+        "product_demand": 120,       # merge point — chassis + board + magnetron
         "available_time": 8.0,
         "rul": 999.0,
         "status": "ONLINE",
     },
     5: {
-        "name": "Mill-Epsilon",
+        "name": "QC & Pack",
         "base_time": 8.0,
-        "product_demand": 130,
+        "product_demand": 100,       # bottleneck — burn-in test + boxing
         "available_time": 8.0,
         "rul": 999.0,
         "status": "ONLINE",
