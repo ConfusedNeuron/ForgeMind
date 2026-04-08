@@ -263,4 +263,13 @@ class FactoryState:
         for m in self.machines.values():
             m.status         = "ONLINE"
             m.rul            = 999.0
-            m.available_tim
+            m.available_time = m.base_time
+        self.rul_history.clear()
+        self.per_machine_sensor_history.clear()
+        self.capacity_pct = 100.0
+        self.machine_req = 0.0
+        self.breakeven_risk = False
+        self.maintenance_schedule.clear()
+        self.shift_health = ("NOMINAL  —  All 5 machines running. Capacity: 100%", "green")
+        self.degradation_leaderboard.clear()
+
