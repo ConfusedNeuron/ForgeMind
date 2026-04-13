@@ -264,12 +264,16 @@ class FactoryState:
             m.status         = "ONLINE"
             m.rul            = 999.0
             m.available_time = m.base_time
-        self.rul_history.clear()
-        self.per_machine_sensor_history.clear()
+
+        # Must re-initialize dicts dynamically based on existing machines to avoid KeyErrors
+        self.rul_history = {mid: [] for mid in self.machines.keys()}
+        self.per_machine_sensor_history = {mid: [[] for _ in range(18)] for mid in self.machines.keys()}
+        self.sensor_history = [[] for _ in range(18)]
+
         self.capacity_pct = 100.0
         self.machine_req = 0.0
         self.breakeven_risk = False
-        self.maintenance_schedule.clear()
+        self.maintenance_schedule = []
         self.shift_health = ("NOMINAL  —  All 5 machines running. Capacity: 100%", "green")
-        self.degradation_leaderboard.clear()
+        self.degradation_leaderboard = []
 

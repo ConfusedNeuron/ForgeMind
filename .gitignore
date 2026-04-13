@@ -313,3 +313,5 @@ dmypy.json
 cython_debug/
 
 publication_output
+
+architecture_audit_report.md
