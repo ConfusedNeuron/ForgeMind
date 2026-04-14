@@ -204,6 +204,19 @@ class FactoryApp(App):
         # Returns a result dict directly compatible with _process_result().
         result = run_agent_loop(user_text, machine_id, base_window, predict_rul)
 
+        # ── Step 5b: Persist degraded sensor state ────────────────────────────
+        # The diagnostic agent's injected tensor is ephemeral — without this,
+        # each new fault starts from a near-healthy base window and the model
+        # can predict a HIGHER RUL than the previous fault (health goes UP).
+        # By pushing the injected window's final rows into per-machine sensor
+        # history, subsequent faults compound on the already-degraded state.
+        injected = result.get("injected_window")
+        if injected is not None and result["valid"]:
+            # Push the last 5 rows of the degraded tensor to build up history
+            # that reflects the cumulative degradation pattern.
+            for row in injected[-5:]:
+                self.state.push_machine_sensor_reading(machine_id, row)
+
         # ── Step 6: Standard result processing ───────────────────────────────
         self._process_result(result, machine_id, old_rul)
 
