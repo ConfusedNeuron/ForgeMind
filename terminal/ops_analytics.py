@@ -125,16 +125,29 @@ def check_sensor_saturation(
         Empty list = all sensors healthy.
     """
     from .layout import SENSOR_DISPLAY_NAMES
+    from dl_engine.inference import get_scaler_ranges
+
     sensor_names = SENSOR_DISPLAY_NAMES
     saturated = []
+
+    # The sensor history stores RAW physical unit values (e.g. temps ~500,
+    # pressures ~2000).  We must normalise to [0, 1] using the DL engine's
+    # scaler before comparing against saturation thresholds.
+    ranges = get_scaler_ranges()
+    lo  = ranges["min"]    # (18,)
+    rng = ranges["range"]  # (18,)
 
     for idx, history in enumerate(sensor_history):
         if len(history) < n_consecutive:
             continue
         recent = history[-n_consecutive:]
-        if all(v >= 0.97 for v in recent):
+        # Normalise raw → [0, 1] using the same scaler as predict_rul()
+        feat_lo  = float(lo[idx])
+        feat_rng = float(rng[idx]) if rng[idx] > 0 else 1.0
+        normalised = [(v - feat_lo) / feat_rng for v in recent]
+        if all(v >= 0.97 for v in normalised):
             saturated.append((sensor_names[idx], "MAX"))
-        elif all(v <= 0.03 for v in recent):
+        elif all(v <= 0.03 for v in normalised):
             saturated.append((sensor_names[idx], "ZERO"))
 
     return saturated
