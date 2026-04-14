@@ -379,10 +379,18 @@ class FactoryApp(App):
             "assembly":        4, "final":         4, "merge":     4,
             "qc":              5, "pack":          5, "test":      5, "quality": 5,
         }
-        text_lower = text.lower()
+        # Use word-set matching to avoid substring collisions
+        # (e.g. "press" inside "pressure" falsely routing to Machine 1)
+        words = set(text.lower().split())
         for name, mid in name_map.items():
-            if name in text_lower:
-                return mid
+            if " " in name:
+                # Multi-word keys: use substring check (e.g. "metal press")
+                if name in text.lower():
+                    return mid
+            else:
+                # Single-word keys: require exact word match
+                if name in words:
+                    return mid
 
         self._machine_cycle = (self._machine_cycle % 5) + 1
         return self._machine_cycle
