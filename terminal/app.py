@@ -187,8 +187,8 @@ class FactoryApp(App):
         old_rul = self.state.machines[machine_id].rul
 
         # ── Step 3: Push simulated reading so sparklines update immediately ──
-        # _simulate_fault_reading() produces visual-only [0,1] values for the
-        # sensor sparklines. The diagnostic agent generates the real tensor.
+        # _simulate_fault_reading() produces a sensor row in raw physical units
+        # for sparklines. The diagnostic agent generates the real injected tensor.
         fault_reading = self._simulate_fault_reading(user_text)
         self.state.push_machine_sensor_reading(machine_id, fault_reading)
 
