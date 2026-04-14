@@ -77,8 +77,8 @@ class TestInitialization:
         assert state.active_machine_id == 1
 
     def test_machine_names_are_correct(self, state):
-        expected = {1: "CNC-Alpha", 2: "CNC-Beta", 3: "Press-Gamma",
-                    4: "Lathe-Delta", 5: "Mill-Epsilon"}
+        expected = {1: "Metal Press", 2: "Paint & Coat", 3: "PCB Line",
+                    4: "Final Assembly", 5: "QC & Pack"}
         for mid, name in expected.items():
             assert state.machines[mid].name == name
 
