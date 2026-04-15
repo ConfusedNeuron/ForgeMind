@@ -266,7 +266,6 @@ class FactoryState:
             m.available_time = m.base_time
         self.rul_history.clear()
         self.per_machine_sensor_history.clear()
-        self.sensor_history = [[] for _ in range(18)]  # clear shared sparklines too
         self.capacity_pct = 100.0
         self.machine_req = 0.0
         self.breakeven_risk = False

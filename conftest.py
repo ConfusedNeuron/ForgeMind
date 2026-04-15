@@ -1,5 +1,5 @@
 """
-conftest.py
+tests/conftest.py
 Shared pytest fixtures for the ForgeMind test suite.
 """
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from agents.schemas import SensorSpike, FaultSeverity
