@@ -187,8 +187,8 @@ class FactoryApp(App):
         old_rul = self.state.machines[machine_id].rul
 
         # ── Step 3: Push simulated reading so sparklines update immediately ──
-        # _simulate_fault_reading() produces a sensor row in raw physical units
-        # for sparklines. The diagnostic agent generates the real injected tensor.
+        # _simulate_fault_reading() produces visual-only [0,1] values for the
+        # sensor sparklines. The diagnostic agent generates the real tensor.
         fault_reading = self._simulate_fault_reading(user_text)
         self.state.push_machine_sensor_reading(machine_id, fault_reading)
 
@@ -203,19 +203,6 @@ class FactoryApp(App):
         # into base_window) → predict_rul() → Capacity Agent → Floor Manager.
         # Returns a result dict directly compatible with _process_result().
         result = run_agent_loop(user_text, machine_id, base_window, predict_rul)
-
-        # ── Step 5b: Persist degraded sensor state ────────────────────────────
-        # The diagnostic agent's injected tensor is ephemeral — without this,
-        # each new fault starts from a near-healthy base window and the model
-        # can predict a HIGHER RUL than the previous fault (health goes UP).
-        # By pushing the injected window's final rows into per-machine sensor
-        # history, subsequent faults compound on the already-degraded state.
-        injected = result.get("injected_window")
-        if injected is not None and result["valid"]:
-            # Push the last 5 rows of the degraded tensor to build up history
-            # that reflects the cumulative degradation pattern.
-            for row in injected[-5:]:
-                self.state.push_machine_sensor_reading(machine_id, row)
 
         # ── Step 6: Standard result processing ───────────────────────────────
         self._process_result(result, machine_id, old_rul)
@@ -379,18 +366,10 @@ class FactoryApp(App):
             "assembly":        4, "final":         4, "merge":     4,
             "qc":              5, "pack":          5, "test":      5, "quality": 5,
         }
-        # Use word-set matching to avoid substring collisions
-        # (e.g. "press" inside "pressure" falsely routing to Machine 1)
-        words = set(text.lower().split())
+        text_lower = text.lower()
         for name, mid in name_map.items():
-            if " " in name:
-                # Multi-word keys: use substring check (e.g. "metal press")
-                if name in text.lower():
-                    return mid
-            else:
-                # Single-word keys: require exact word match
-                if name in words:
-                    return mid
+            if name in text_lower:
+                return mid
 
         self._machine_cycle = (self._machine_cycle % 5) + 1
         return self._machine_cycle

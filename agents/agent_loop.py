@@ -124,7 +124,6 @@ def run_agent_loop(
             "dispatch_orders":  None,
             "machine_statuses": get_all_machine_statuses(),
             "used_fallback":    False,
-            "injected_window":  None,
             "latency_ms":       round((time.time() - t_start) * 1000, 1),
         }
 
@@ -214,6 +213,5 @@ def run_agent_loop(
         "dispatch_orders":  dispatch,
         "machine_statuses": get_all_machine_statuses(),
         "used_fallback":    OFFLINE_MODE,
-        "injected_window":  injected,
         "latency_ms":       latency_ms,
     }

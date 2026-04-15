@@ -3,7 +3,6 @@ aircraft
 data/
 test_inference_local.py
 test_*.py
-audit_and_demo_guide.md
 
 # User-specific stuff
 .idea/**/workspace.xml

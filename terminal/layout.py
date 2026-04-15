@@ -21,8 +21,30 @@ from datetime import datetime
 # ─────────────────────────────────────────────────────────────────────────────
 # BUSINESS-FRIENDLY SENSOR NAMES
 # ─────────────────────────────────────────────────────────────────────────────
-# Canonical source is ops_analytics.py — imported here to avoid duplication.
-from .ops_analytics import SENSOR_DISPLAY_NAMES  # noqa: F401
+# Maps the 18 N-CMAPSS tensor columns to names a factory manager understands.
+# Internal pipeline still uses W0/Xs0 etc — this is display-only.
+# Order matches tensor column order: [W0, W1, W2, W3, Xs0, Xs1, ... Xs13]
+
+SENSOR_DISPLAY_NAMES = [
+    "Motor RPM",       # W0   (col 0)  — drive speed
+    "Feed Rate",       # W1   (col 1)  — material feed
+    "Power kW",        # W2   (col 2)  — electrical draw
+    "Coolant Flow",    # W3   (col 3)  — cooling rate
+    "Vibration X",     # Xs0  (col 4)  — X-axis vibration
+    "Vibration Y",     # Xs1  (col 5)  — Y-axis vibration
+    "Bearing Temp",    # Xs2  (col 6)  — KEY degradation sensor
+    "Motor Temp",      # Xs3  (col 7)  — KEY degradation sensor
+    "Oil Pressure",    # Xs4  (col 8)  — lubricant pressure
+    "Oil Temp",        # Xs5  (col 9)  — lubricant temperature
+    "Spindle Load",    # Xs6  (col 10) — tool load %
+    "Torque",          # Xs7  (col 11) — applied torque
+    "Hydraulic PSI",   # Xs8  (col 12) — hydraulic pressure
+    "Coolant Temp",    # Xs9  (col 13) — coolant temperature
+    "Ambient Temp",    # Xs10 (col 14) — environment temp
+    "Current Amps",    # Xs11 (col 15) — electrical current
+    "Acoustic dB",     # Xs12 (col 16) — noise level
+    "Cycle Time",      # Xs13 (col 17) — time per cycle
+]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
