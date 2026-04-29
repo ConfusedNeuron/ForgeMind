@@ -25,12 +25,12 @@ OFFLINE_MODE: bool = False
 def _inject_spike(base_window: np.ndarray, spike: dict) -> np.ndarray:
     """Inject spike dict into a copy of base_window. Used in offline mode.
 
-    Uses the same multi-sensor correlated RAMP pattern as the diagnostic
-    agent's injection.  spike_value is in normalised [0, 1]; we convert
-    to raw physical units so the scaler maps it back correctly.
+    Uses the same ADDITIVE multi-sensor ramp pattern as the diagnostic
+    agent's injection.  Each hit adds damage on top of current state.
+    spike_value is in normalised [0, 1]; we convert to raw physical units.
     """
-    from dl_engine.inference import raw_value_for_scaled
-    from .diagnostic_agent import SENSOR_TO_COL, SENSOR_CORRELATIONS
+    from dl_engine.inference import raw_value_for_scaled, get_scaler_ranges
+    from .diagnostic_agent import SENSOR_TO_COL, SENSOR_CORRELATIONS, RAMP_ESCALATION
 
     sensor_id = spike["sensor_id"]
 
@@ -43,19 +43,29 @@ def _inject_spike(base_window: np.ndarray, spike: dict) -> np.ndarray:
         raise ValueError(f"Unknown sensor_id: {sensor_id}")
 
     injected = base_window.copy()
+    ranges = get_scaler_ranges()
 
-    # ── Primary sensor: full ramp ─────────────────────────────────────────
-    raw_start = float(injected[0, col])
-    raw_end   = raw_value_for_scaled(col, spike["spike_value"])
+    def _current_scaled(c: int, raw_val: float) -> float:
+        lo  = float(ranges["min"][c])
+        rng = float(ranges["range"][c])
+        return (raw_val - lo) / rng if rng > 0 else 0.0
+
+    # ── Primary sensor: additive ramp ─────────────────────────────────────
+    raw_start      = float(injected[0, col])
+    current_scaled = _current_scaled(col, raw_start)
+    target_scaled  = min(0.98, current_scaled + spike["spike_value"] * RAMP_ESCALATION)
+    raw_end        = raw_value_for_scaled(col, target_scaled)
     ramp = np.linspace(raw_start, raw_end, 50).astype(np.float32)
     injected[:, col] = ramp
 
-    # ── Correlated sensors: scaled ramp ───────────────────────────────────
+    # ── Correlated sensors: additive scaled ramp ──────────────────────────
     for corr_sensor_id, intensity in SENSOR_CORRELATIONS.get(sensor_id, []):
-        corr_col = SENSOR_TO_COL[corr_sensor_id]
-        corr_start = float(injected[0, corr_col])
-        corr_target_scaled = spike["spike_value"] * intensity
-        corr_end = raw_value_for_scaled(corr_col, corr_target_scaled)
+        corr_col     = SENSOR_TO_COL[corr_sensor_id]
+        corr_start   = float(injected[0, corr_col])
+        corr_current = _current_scaled(corr_col, corr_start)
+        corr_delta   = spike["spike_value"] * intensity * RAMP_ESCALATION
+        corr_target  = min(0.98, corr_current + corr_delta)
+        corr_end     = raw_value_for_scaled(corr_col, corr_target)
         corr_ramp = np.linspace(corr_start, corr_end, 50).astype(np.float32)
         injected[:, corr_col] = corr_ramp
 

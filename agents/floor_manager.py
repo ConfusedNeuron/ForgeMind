@@ -14,11 +14,16 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
 
 api_key = os.getenv("GEMINI_API_KEY_FLOOR_MANAGER")
 if not api_key:
-    raise ValueError("GEMINI_API_KEY_FLOOR_MANAGER not found in environment")
-
-print(f"Loaded API key for FLOOR MANAGER agent: {bool(api_key)}")
-
-client = genai.Client(api_key=api_key)
+    import warnings
+    warnings.warn(
+        "GEMINI_API_KEY_FLOOR_MANAGER not found in environment. "
+        "Floor manager will use template fallback.",
+        stacklevel=2,
+    )
+    client = None
+else:
+    # print(f"Loaded API key for FLOOR MANAGER agent: {bool(api_key)}")  # commented — noisy before TUI
+    client = genai.Client(api_key=api_key)
 
 log = get_logger("floor_manager")
 
@@ -113,6 +118,11 @@ def issue_dispatch_orders(capacity_report: dict) -> tuple[str, bool]:
         dispatch_str:   str — the dispatch order to display on terminal
         used_fallback:  bool — True if template was used instead of Gemini
     """
+    # If client is None (no API key), skip Gemini entirely
+    if client is None:
+        log.warning("No API key — skipping Gemini, using template fallback.")
+        return _template_fallback(capacity_report), True
+
     last_error = ""
 
     # Build the context block — all numbers Agent 3 is allowed to use

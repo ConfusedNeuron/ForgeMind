@@ -90,6 +90,7 @@ fabric.properties
 [Ll]ocal
 [Ss]cripts
 pyvenv.cfg
+.claude
 .venv
 pip-selfcheck.json
 
@@ -200,6 +201,7 @@ wheels/
 share/python-wheels/
 *.egg-info/
 .installed.cfg
+CLAUDE.md
 *.egg
 MANIFEST
 

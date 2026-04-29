@@ -43,7 +43,7 @@ def is_valid_fault_input(user_text: str) -> tuple[bool, str]:
             "Unrecognized fault type. Try something like: "
             "'high pressure in compressor', "
             "'bearing overheat on Machine 3', or "
-            "'vibration spike on CNC-Alpha'."
+            "'vibration spike on Metal Press'."
         )
 
     return True, ""

@@ -23,13 +23,16 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parents[1] / ".env")
 api_key = os.getenv("GEMINI_API_KEY_DIAGNOSTIC")
 
 if not api_key:
-    raise ValueError("GEMINI_API_KEY_DIAGNOSTIC not found in environment")
-
-print(f"Loaded API key for DIAGNOSTIC agent: {bool(api_key)}") # comment during production
-#logging.basicConfig(level=logging.INFO) #uncomment during production
-#logging.info("Using GEMINI_API_KEY_DIAGNOSTIC") #uncomment during production
-# Initialize client
-client = genai.Client(api_key=api_key)
+    import warnings
+    warnings.warn(
+        "GEMINI_API_KEY_DIAGNOSTIC not found in environment. "
+        "Diagnostic agent will use deterministic fallback spikes.",
+        stacklevel=2,
+    )
+    client = None
+else:
+    # print(f"Loaded API key for DIAGNOSTIC agent: {bool(api_key)}")  # commented — noisy before TUI
+    client = genai.Client(api_key=api_key)
 
 # ── Structured logger ──────────────────────────────────────────────────────────
 log = get_logger("diagnostic")
@@ -201,95 +204,113 @@ def _get_fallback(user_text: str) -> SensorSpike:
 # Every fault type MUST include Xs2/Xs3 at some intensity — physically all
 # machine faults eventually stress these thermal/pressure channels.
 #
-# Intensity hierarchy:
-#   0.80–0.90 = direct thermal/pressure fault (strongest RUL impact)
-#   0.55–0.70 = mechanically coupled fault (moderate impact)
-#   0.35–0.50 = indirect/operating-condition fault (mild impact)
+# Intensity hierarchy (tuned for gradual degradation path):
+#   First fault → DEGRADED (RUL 20-35), second fault → OFFLINE (RUL ≤15)
+#   The injected[-5:] persistence in app.py compounds damage across hits.
 #
+#   0.65–0.70 = direct thermal/pressure fault (strongest RUL impact)
+#   0.50–0.60 = mechanically coupled fault (moderate impact)
+#   0.40–0.50 = indirect/operating-condition fault (mild impact)
+#
+# RAMP_ESCALATION controls how much each hit adds (additive injection).
+# Module-level so agent_loop._inject_spike (offline path) can import it
+# and stay in sync with the online injection.
+RAMP_ESCALATION: float = 0.55   # fraction of spike added per hit
+
 # Format: primary_sensor → [(correlated_sensor, intensity_fraction), ...]
 SENSOR_CORRELATIONS: dict[str, list[tuple[str, float]]] = {
-    # Temperature faults → directly stress key degradation sensors
-    "Xs4":  [("Xs2", 0.85), ("Xs3", 0.78)],
-    "Xs5":  [("Xs2", 0.82), ("Xs3", 0.75)],
+    # Temperature faults → stress key degradation sensors
+    "Xs4":  [("Xs2", 0.68), ("Xs3", 0.60)],
+    "Xs5":  [("Xs2", 0.65), ("Xs3", 0.58)],
     # Pressure faults → co-located thermal stress
-    "Xs2":  [("Xs3", 0.82), ("Xs6", 0.65)],
-    "Xs6":  [("Xs2", 0.78), ("Xs3", 0.72)],
+    "Xs2":  [("Xs3", 0.65), ("Xs6", 0.50)],
+    "Xs6":  [("Xs2", 0.62), ("Xs3", 0.55)],
     # Bearing/fan faults → friction heat propagates to thermal sensors
-    "Xs0":  [("Xs2", 0.75), ("Xs3", 0.68), ("Xs1", 0.70)],
-    "Xs1":  [("Xs2", 0.75), ("Xs3", 0.68), ("Xs0", 0.70)],
+    "Xs0":  [("Xs2", 0.58), ("Xs3", 0.50), ("Xs1", 0.55)],
+    "Xs1":  [("Xs2", 0.58), ("Xs3", 0.50), ("Xs0", 0.55)],
     # Vibration/enthalpy → mechanical stress raises temps
-    "Xs7":  [("Xs2", 0.78), ("Xs3", 0.70), ("Xs0", 0.45)],
+    "Xs7":  [("Xs2", 0.62), ("Xs3", 0.52), ("Xs0", 0.35)],
     # Speed/RPM faults → off-design operation strains thermal path
-    "Xs8":  [("Xs2", 0.72), ("Xs3", 0.65), ("Xs9", 0.70)],
-    "Xs9":  [("Xs2", 0.72), ("Xs3", 0.65), ("Xs8", 0.70)],
-    "Xs10": [("Xs2", 0.68), ("Xs3", 0.62), ("Xs4", 0.55)],
-    "Xs13": [("Xs2", 0.68), ("Xs3", 0.62), ("Xs4", 0.50)],
+    "Xs8":  [("Xs2", 0.55), ("Xs3", 0.48), ("Xs9", 0.52)],
+    "Xs9":  [("Xs2", 0.55), ("Xs3", 0.48), ("Xs8", 0.52)],
+    "Xs10": [("Xs2", 0.50), ("Xs3", 0.44), ("Xs4", 0.42)],
+    "Xs13": [("Xs2", 0.50), ("Xs3", 0.44), ("Xs4", 0.38)],
     # Coolant/bleed faults → reduced cooling raises degradation temps
-    "Xs12": [("Xs2", 0.75), ("Xs3", 0.68), ("Xs11", 0.60)],
-    "Xs11": [("Xs2", 0.72), ("Xs3", 0.65), ("Xs12", 0.55)],
+    "Xs12": [("Xs2", 0.58), ("Xs3", 0.50), ("Xs11", 0.45)],
+    "Xs11": [("Xs2", 0.55), ("Xs3", 0.48), ("Xs12", 0.42)],
     # Operating condition faults → affect thermal equilibrium
-    "W0":   [("Xs2", 0.70), ("Xs3", 0.62), ("W2", 0.40)],
-    "W1":   [("Xs2", 0.65), ("Xs3", 0.58)],
-    "W2":   [("Xs2", 0.68), ("Xs3", 0.60)],
-    "W3":   [("Xs2", 0.70), ("Xs3", 0.62)],
+    "W0":   [("Xs2", 0.52), ("Xs3", 0.45), ("W2", 0.30)],
+    "W1":   [("Xs2", 0.48), ("Xs3", 0.40)],
+    "W2":   [("Xs2", 0.50), ("Xs3", 0.42)],
+    "W3":   [("Xs2", 0.52), ("Xs3", 0.45)],
 }
 
 
 def _inject_spike(base_window: np.ndarray, spike: SensorSpike) -> np.ndarray:
     """
-    Inject a fault into a COPY of base_window using a physics-informed
-    multi-sensor RAMP pattern.
+    Inject a fault into a COPY of base_window using ADDITIVE multi-sensor
+    RAMP injection.
 
-    Model probing revealed:
-      - Single-sensor step spikes barely move RUL (~0.5 cycle change)
-      - 3-sensor ramps across the full window produce dramatic drops
-        (71 → 8 RUL for a 3-sensor ramp from 0.1 → 0.95)
+    Each hit ADDS degradation on top of the current sensor state rather than
+    ramping to a fixed target.  This enables progressive degradation:
+      Hit 1 → ONLINE (RUL 35-50)
+      Hit 2 → DEGRADED (RUL 15-30)
+      Hit 3 → OFFLINE (RUL ≤15)
 
-    Strategy:
-      1. PRIMARY sensor: ramp from its current baseline value to the
-         spike_value (in raw units) across the full 50-step window.
-      2. CORRELATED sensors: same ramp but scaled by an intensity
-         fraction (e.g. 0.70 × spike_value).
+    The base_window carries accumulated damage from previous faults via
+    factory_state._build_window() padding with h[-1] (latest reading).
 
-    This mimics the gradual multi-sensor degradation patterns the
-    CNN-LSTM was trained on (N-CMAPSS turbofan data).
+    RAMP_ESCALATION controls how much each hit adds:
+      delta = spike_value × intensity × RAMP_ESCALATION
 
     Args:
         base_window: (50, 18) float32 array — sensor readings in raw units
         spike:       validated SensorSpike object
 
     Returns:
-        (50, 18) float32 array — copy with correlated ramp injected
+        (50, 18) float32 array — copy with additive correlated ramp injected
     """
-    from dl_engine.inference import raw_value_for_scaled
+    from dl_engine.inference import raw_value_for_scaled, get_scaler_ranges
 
     injected = base_window.copy()
     primary_col = SENSOR_TO_COL[spike.sensor_id]
 
-    # ── Primary sensor: full ramp ─────────────────────────────────────────
-    raw_start = float(injected[0, primary_col])           # current baseline
-    raw_end   = raw_value_for_scaled(primary_col, spike.spike_value)
+    ranges = get_scaler_ranges()
+
+    def _current_scaled(col: int, raw_val: float) -> float:
+        """Convert raw sensor value to [0,1] scaled position."""
+        lo  = float(ranges["min"][col])
+        rng = float(ranges["range"][col])
+        return (raw_val - lo) / rng if rng > 0 else 0.0
+
+    # ── Primary sensor: additive ramp ─────────────────────────────────────
+    raw_start      = float(injected[0, primary_col])
+    current_scaled = _current_scaled(primary_col, raw_start)
+    target_scaled  = min(0.98, current_scaled + spike.spike_value * RAMP_ESCALATION)
+    raw_end        = raw_value_for_scaled(primary_col, target_scaled)
     ramp = np.linspace(raw_start, raw_end, 50).astype(np.float32)
     injected[:, primary_col] = ramp
 
     log.debug(
         "Spike inject: %s (col %d) ramp %.1f → %.1f (scaled %.2f → %.2f)",
-        spike.sensor_id, primary_col, raw_start, raw_end, 0.10, spike.spike_value,
+        spike.sensor_id, primary_col, raw_start, raw_end, current_scaled, target_scaled,
     )
 
-    # ── Correlated sensors: scaled ramp ───────────────────────────────────
+    # ── Correlated sensors: additive scaled ramp ──────────────────────────
     correlations = SENSOR_CORRELATIONS.get(spike.sensor_id, [])
     for corr_sensor_id, intensity in correlations:
-        corr_col = SENSOR_TO_COL[corr_sensor_id]
-        corr_start = float(injected[0, corr_col])
-        corr_target_scaled = spike.spike_value * intensity
-        corr_end = raw_value_for_scaled(corr_col, corr_target_scaled)
+        corr_col       = SENSOR_TO_COL[corr_sensor_id]
+        corr_start     = float(injected[0, corr_col])
+        corr_current   = _current_scaled(corr_col, corr_start)
+        corr_delta     = spike.spike_value * intensity * RAMP_ESCALATION
+        corr_target    = min(0.98, corr_current + corr_delta)
+        corr_end       = raw_value_for_scaled(corr_col, corr_target)
         corr_ramp = np.linspace(corr_start, corr_end, 50).astype(np.float32)
         injected[:, corr_col] = corr_ramp
 
         log.debug(
-            "  + correlated %s (col %d) ramp → scaled %.2f (intensity %.0f%%)",
-            corr_sensor_id, corr_col, corr_target_scaled, intensity * 100,
+            "  + correlated %s (col %d) ramp → scaled %.2f→%.2f (intensity %.0f%%)",
+            corr_sensor_id, corr_col, corr_current, corr_target, intensity * 100,
         )
 
     return injected
@@ -317,6 +338,13 @@ def translate_fault_to_tensor(
         spike_dict:      SensorSpike fields as plain dict (for logging/UI)
         used_fallback:   True if Gemini failed and hardcoded fallback was used
     """
+    # If client is None (no API key), skip Gemini entirely
+    if client is None:
+        log.warning("No API key — skipping Gemini, using deterministic fallback.")
+        spike = _get_fallback(user_text)
+        injected = _inject_spike(base_window, spike)
+        return injected, spike.model_dump(), True
+
     spike: SensorSpike | None = None
     last_error: str = ""
 

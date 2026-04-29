@@ -5,46 +5,12 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 import torch
-import torch.nn as nn
 import numpy as np
 import joblib
 from pathlib import Path
 
-# ── Model definition (must match training) ────────────────────────────────────
-class CNNLSTM_RUL(nn.Module):
-    def __init__(self, n_features=18, window=50, cnn_filters=64,
-                 lstm_hidden=128, lstm_layers=2, dropout=0.3):
-        super().__init__()
-        self.cnn = nn.Sequential(
-            nn.Conv1d(n_features, cnn_filters, kernel_size=3, padding=1),
-            nn.BatchNorm1d(cnn_filters),
-            nn.ReLU(),
-            nn.Conv1d(cnn_filters, cnn_filters * 2, kernel_size=3, padding=1),
-            nn.BatchNorm1d(cnn_filters * 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-        )
-        self.lstm = nn.LSTM(
-            input_size  = cnn_filters * 2,
-            hidden_size = lstm_hidden,
-            num_layers  = lstm_layers,
-            batch_first = True,
-            dropout     = dropout if lstm_layers > 1 else 0.0,
-        )
-        self.regressor = nn.Sequential(
-            nn.Linear(lstm_hidden, 64),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(64, 1),
-        )
-
-    def forward(self, x):
-        x = x.permute(0, 2, 1)
-        x = self.cnn(x)
-        x = x.permute(0, 2, 1)
-        _, (h_n, _) = self.lstm(x)
-        x = h_n[-1]
-        return self.regressor(x).squeeze(-1)
+# ── Model definition — single source of truth in model.py ─────────────────────
+from .model import CNNLSTM_RUL
 
 
 # ── Lazy-loaded singletons ────────────────────────────────────────────────────
@@ -73,9 +39,10 @@ def load_model(
     _model.load_state_dict(checkpoint["model_state_dict"])
     _model.eval()
     _scaler = joblib.load(scaler_path)
-    print(f"[inference.py] Model loaded from {weights_path}  "
-          f"(best epoch={checkpoint.get('epoch','?')}  "
-          f"val_RMSE={checkpoint.get('val_rmse', float('nan')):.3f})")
+    # print(f"[inference.py] Model loaded from {weights_path}  "  # commented — noisy before TUI
+    #       f"(best epoch={checkpoint.get('epoch','?')}  "
+    #       f"val_RMSE={checkpoint.get('val_rmse', float('nan')):.3f})")
+
 
 
 def predict_rul(sensor_tensor: np.ndarray) -> float:

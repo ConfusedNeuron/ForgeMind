@@ -60,8 +60,8 @@ def make_spike():
 @pytest.fixture
 def make_capacity_report():
     """Factory for capacity report dicts matching Agent 2's return schema."""
-    _names = {1: "CNC-Alpha", 2: "CNC-Beta", 3: "Press-Gamma",
-              4: "Lathe-Delta", 5: "Mill-Epsilon"}
+    _names = {1: "Metal Press", 2: "Paint & Coat", 3: "PCB Line",
+              4: "Final Assembly", 5: "QC & Pack"}
 
     def _make(status, machine_id=4, rul=12.0, cap=80.0, req=18.594, risk=True):
         return {

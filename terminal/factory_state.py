@@ -195,7 +195,14 @@ class FactoryState:
     def get_machine_sensor_window(self, machine_id: int) -> np.ndarray:
         """
         Build a (50, 18) sensor window for a specific machine.
-        Falls back to the shared buffer if no per-machine history exists.
+
+        When the machine has no per-machine history, build a fresh healthy
+        window — do NOT fall back to the shared sensor_history buffer, which
+        is contaminated by whichever machine was active most recently
+        (push_machine_sensor_reading mirrors into the shared buffer for the
+        active machine's sparklines). Falling back there causes the next
+        machine's first fault to inherit the previous machine's degraded
+        sensor state.
 
         Args:
             machine_id: int 1–5
@@ -205,7 +212,7 @@ class FactoryState:
         """
         history = self.per_machine_sensor_history.get(machine_id)
         if history is None or all(len(h) == 0 for h in history):
-            return self.get_sensor_window()
+            return self._build_window([[] for _ in range(18)])
         return self._build_window(history)
 
     def _build_window(self, history: list) -> np.ndarray:
@@ -230,7 +237,9 @@ class FactoryState:
             if len(h) >= 50:
                 window[:, sensor_idx] = h[-50:]
             elif len(h) > 0:
-                padding = [h[0]] * (50 - len(h))
+                # Pad with LATEST value so base reflects accumulated damage
+                # from previous faults (not the first-ever healthy reading).
+                padding = [h[-1]] * (50 - len(h))
                 window[:, sensor_idx] = np.array(padding + h, dtype=np.float32)
             else:
                 # No history at all — fill with realistic baseline
@@ -264,8 +273,8 @@ class FactoryState:
             m.status         = "ONLINE"
             m.rul            = 999.0
             m.available_time = m.base_time
-        self.rul_history.clear()
-        self.per_machine_sensor_history.clear()
+        self.rul_history = {i: [] for i in range(1, 6)}
+        self.per_machine_sensor_history = {i: [[] for _ in range(18)] for i in range(1, 6)}
         self.sensor_history = [[] for _ in range(18)]  # clear shared sparklines too
         self.capacity_pct = 100.0
         self.machine_req = 0.0

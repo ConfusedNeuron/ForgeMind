@@ -20,13 +20,13 @@ class TestValidateOutput:
     def test_valid_output_passes(self, make_capacity_report):
         r = make_capacity_report("OFFLINE")
         ok, _ = _validate_output(
-            "[Floor Manager] Lathe-Delta is OFFLINE. Halt. Reroute. 80.0%.", r
+            "[Floor Manager] Final Assembly is OFFLINE. Halt. Reroute. 80.0%.", r
         )
         assert ok is True
 
     def test_missing_floor_manager_prefix_rejected(self, make_capacity_report):
         r = make_capacity_report("OFFLINE")
-        ok, _ = _validate_output("Lathe-Delta is OFFLINE.", r)
+        ok, _ = _validate_output("Final Assembly is OFFLINE.", r)
         assert ok is False
 
     def test_empty_string_rejected(self, make_capacity_report):
@@ -52,7 +52,7 @@ class TestTemplateFallback:
         r = make_capacity_report("OFFLINE", machine_id=4, rul=12.0, cap=80.0)
         t = _template_fallback(r)
         assert t.startswith("[Floor Manager]")
-        assert "Lathe-Delta" in t
+        assert "Final Assembly" in t
         assert "12.0" in t
         assert "80.0" in t
         assert "maintenance" in t.lower()
@@ -63,7 +63,7 @@ class TestTemplateFallback:
                                   req=16.528, risk=True)
         t = _template_fallback(r)
         assert t.startswith("[Floor Manager]")
-        assert "CNC-Beta" in t
+        assert "Paint & Coat" in t
         assert "22.0" in t
         assert "50%" in t
         assert _validate_output(t, r)[0]
@@ -73,7 +73,7 @@ class TestTemplateFallback:
                                   req=14.875, risk=False)
         t = _template_fallback(r)
         assert t.startswith("[Floor Manager]")
-        assert "CNC-Alpha" in t
+        assert "Metal Press" in t
         assert "55.0" in t
         assert _validate_output(t, r)[0]
 

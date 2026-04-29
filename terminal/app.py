@@ -186,14 +186,18 @@ class FactoryApp(App):
         # ── Step 2: Snapshot old RUL before the oracle runs ──────────────────
         old_rul = self.state.machines[machine_id].rul
 
-        # ── Step 3: Push simulated reading so sparklines update immediately ──
-        # _simulate_fault_reading() produces a sensor row in raw physical units
-        # for sparklines. The diagnostic agent generates the real injected tensor.
+        # ── Step 3: Build base window FIRST (before simulate push) ─────────
+        # The base_window must reflect accumulated damage from previous faults.
+        # _build_window() pads with h[-1], so we build BEFORE pushing the
+        # healthy-ish simulate reading — otherwise h[-1] would be healthy
+        # and reset the accumulated damage in the base window.
+        base_window = self.state.get_machine_sensor_window(machine_id)
+
+        # ── Step 3b: Push simulated reading for sparklines ────────────────────
+        # Push AFTER base_window is built so sparklines update immediately
+        # without contaminating the DL oracle's input.
         fault_reading = self._simulate_fault_reading(user_text)
         self.state.push_machine_sensor_reading(machine_id, fault_reading)
-
-        # ── Step 4: Build base window for the diagnostic agent ────────────────
-        base_window = self.state.get_machine_sensor_window(machine_id)
 
         # ── Update active display machine ─────────────────────────────────────
         self.state.active_machine_id = machine_id
