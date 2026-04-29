@@ -29,8 +29,8 @@ from terminal.ops_analytics import (
 
 def _machines(statuses: dict) -> dict:
     """Build a machines dict from {id: (status, rul)}."""
-    names = {1: "Metal Press", 2: "Paint & Coat", 3: "PCB Line",
-             4: "Final Assembly", 5: "QC & Pack"}
+    names = {1: "CNC-Alpha", 2: "CNC-Beta", 3: "Press-Gamma",
+             4: "Lathe-Delta", 5: "Mill-Epsilon"}
     machines = {}
     for mid in range(1, 6):
         status, rul = statuses.get(mid, ("ONLINE", 999.0))
@@ -121,96 +121,53 @@ class TestComputePredictionReliability:
 
 
 # ── check_sensor_saturation ───────────────────────────────────────────────────
-# The current implementation normalises raw values through the DL scaler before
-# comparing thresholds, and returns human-readable SENSOR_DISPLAY_NAMES
-# ("Motor RPM", "Vibration X", …) instead of raw column codes (W0, Xs0).
 
 class TestCheckSensorSaturation:
-    """Tests for check_sensor_saturation with scaler-aware normalisation."""
-
-    @staticmethod
-    def _get_ranges():
-        """Fetch scaler min / range so tests can build raw-unit histories."""
-        from dl_engine.inference import get_scaler_ranges
-        r = get_scaler_ranges()
-        return r["min"], r["range"]
-
-    def _raw_value(self, col: int, scaled: float):
-        """Map a [0,1] scaled position to its raw physical-unit equivalent."""
-        lo, rng = self._get_ranges()
-        return float(lo[col] + scaled * rng[col])
-
-    def _make_history(self, n_sensors=18, length=10, scaled=0.5):
-        """Build a history with every sensor at `scaled` position in [0,1]."""
-        lo, rng = self._get_ranges()
-        return [
-            [float(lo[i] + scaled * rng[i])] * length
-            for i in range(n_sensors)
-        ]
-
-    # ── Display-name lookup ───────────────────────────────────────────────
-    SENSOR_NAMES = [
-        "Motor RPM", "Feed Rate", "Power kW", "Coolant Flow",
-        "Vibration X", "Vibration Y", "Bearing Temp", "Motor Temp",
-        "Oil Pressure", "Oil Temp", "Spindle Load", "Torque",
-        "Hydraulic PSI", "Coolant Temp", "Ambient Temp", "Current Amps",
-        "Acoustic dB", "Cycle Time",
-    ]
+    def _make_history(self, n_sensors=18, length=10, value=0.5):
+        return [[value] * length for _ in range(n_sensors)]
 
     def test_no_saturation_on_mid_range_values(self):
-        history = self._make_history(scaled=0.5)
+        history = self._make_history(value=0.5)
         assert check_sensor_saturation(history) == []
 
     def test_max_saturation_detected(self):
-        history = self._make_history(scaled=0.5)
-        # Saturate col 4 ("Vibration X") high
-        history[4] = [self._raw_value(4, 0.98)] * 10
+        history = self._make_history(value=0.5)
+        history[4] = [0.98] * 10   # Xs0 saturated high
         saturated = check_sensor_saturation(history)
         names = [s[0] for s in saturated]
-        assert "Vibration X" in names
+        assert "Xs0" in names
 
     def test_zero_saturation_detected(self):
-        history = self._make_history(scaled=0.5)
-        # Saturate col 0 ("Motor RPM") low
-        history[0] = [self._raw_value(0, 0.01)] * 10
+        history = self._make_history(value=0.5)
+        history[0] = [0.01] * 10   # W0 stuck at zero
         saturated = check_sensor_saturation(history)
         names = [s[0] for s in saturated]
-        assert "Motor RPM" in names
+        assert "W0" in names
 
     def test_saturation_type_is_max_or_zero(self):
-        history = self._make_history(scaled=0.5)
-        history[4] = [self._raw_value(4, 0.99)] * 10
+        history = self._make_history(value=0.5)
+        history[4] = [0.99] * 10
         saturated = check_sensor_saturation(history)
         assert all(t in ("MAX", "ZERO") for _, t in saturated)
 
     def test_insufficient_history_not_flagged(self):
-        lo, rng = self._get_ranges()
-        # Only 3 readings per sensor — below n_consecutive=5
-        history = [
-            [float(lo[i] + 0.99 * rng[i])] * 3
-            for i in range(18)
-        ]
+        history = self._make_history(value=0.99)
+        for i in range(18):
+            history[i] = [0.99] * 3   # only 3 readings < n_consecutive=5
         assert check_sensor_saturation(history, n_consecutive=5) == []
 
     def test_custom_n_consecutive_3_fires_earlier(self):
-        history = self._make_history(scaled=0.5)
-        # Col 2 ("Power kW") saturated high with only 3 consecutive
-        history[2] = [self._raw_value(2, 0.98)] * 3
+        history = self._make_history(value=0.5)
+        history[2] = [0.98] * 3   # only 3 consecutive
         saturated = check_sensor_saturation(history, n_consecutive=3)
-        names = [s[0] for s in saturated]
-        assert "Power kW" in names
+        assert any(s[0] == "Xs-2" or "W2" in s[0] for s in saturated)
 
-    def test_18_sensor_names_cover_operating_and_physical(self):
-        """All 18 sensors saturated → returned names include both groups."""
-        history = self._make_history(scaled=0.99, length=10)
+    def test_18_sensor_names_cover_w_and_xs(self):
+        history = self._make_history(value=0.99, length=10)
         saturated = check_sensor_saturation(history)
         names = [s[0] for s in saturated]
-        # Operating-condition sensors (W-group: cols 0-3)
-        assert any(n in ("Motor RPM", "Feed Rate", "Power kW", "Coolant Flow")
-                   for n in names)
-        # Physical sensors (Xs-group: cols 4-17)
-        assert any(n in ("Vibration X", "Bearing Temp", "Spindle Load")
-                   for n in names)
+        assert any(n.startswith("W") for n in names)
+        assert any(n.startswith("Xs") for n in names)
 
     def test_empty_history_returns_empty(self):
         history = [[] for _ in range(18)]

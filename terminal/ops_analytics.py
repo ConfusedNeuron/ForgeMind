@@ -18,34 +18,6 @@ from typing import List, Tuple, Dict
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BUSINESS-FRIENDLY SENSOR NAMES  (canonical source — layout.py imports these)
-# ─────────────────────────────────────────────────────────────────────────────
-# Maps the 18 N-CMAPSS tensor columns to names a factory manager understands.
-# Order matches tensor column order: [W0, W1, W2, W3, Xs0, Xs1, ... Xs13]
-
-SENSOR_DISPLAY_NAMES = [
-    "Motor RPM",       # W0   (col 0)  — drive speed
-    "Feed Rate",       # W1   (col 1)  — material feed
-    "Power kW",        # W2   (col 2)  — electrical draw
-    "Coolant Flow",    # W3   (col 3)  — cooling rate
-    "Vibration X",     # Xs0  (col 4)  — X-axis vibration
-    "Vibration Y",     # Xs1  (col 5)  — Y-axis vibration
-    "Bearing Temp",    # Xs2  (col 6)  — KEY degradation sensor
-    "Motor Temp",      # Xs3  (col 7)  — KEY degradation sensor
-    "Oil Pressure",    # Xs4  (col 8)  — lubricant pressure
-    "Oil Temp",        # Xs5  (col 9)  — lubricant temperature
-    "Spindle Load",    # Xs6  (col 10) — tool load %
-    "Torque",          # Xs7  (col 11) — applied torque
-    "Hydraulic PSI",   # Xs8  (col 12) — hydraulic pressure
-    "Coolant Temp",    # Xs9  (col 13) — coolant temperature
-    "Ambient Temp",    # Xs10 (col 14) — environment temp
-    "Current Amps",    # Xs11 (col 15) — electrical current
-    "Acoustic dB",     # Xs12 (col 16) — noise level
-    "Cycle Time",      # Xs13 (col 17) — time per cycle
-]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # 1.4.2  SUDDEN RUL CLIFF DETECTION
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -152,29 +124,17 @@ def check_sensor_saturation(
         List of (sensor_name, "MAX" or "ZERO") for saturated sensors.
         Empty list = all sensors healthy.
     """
-    from dl_engine.inference import get_scaler_ranges
-
+    from .layout import SENSOR_DISPLAY_NAMES
     sensor_names = SENSOR_DISPLAY_NAMES
     saturated = []
-
-    # The sensor history stores RAW physical unit values (e.g. temps ~500,
-    # pressures ~2000).  We must normalise to [0, 1] using the DL engine's
-    # scaler before comparing against saturation thresholds.
-    ranges = get_scaler_ranges()
-    lo  = ranges["min"]    # (18,)
-    rng = ranges["range"]  # (18,)
 
     for idx, history in enumerate(sensor_history):
         if len(history) < n_consecutive:
             continue
         recent = history[-n_consecutive:]
-        # Normalise raw → [0, 1] using the same scaler as predict_rul()
-        feat_lo  = float(lo[idx])
-        feat_rng = float(rng[idx]) if rng[idx] > 0 else 1.0
-        normalised = [(v - feat_lo) / feat_rng for v in recent]
-        if all(v >= 0.97 for v in normalised):
+        if all(v >= 0.97 for v in recent):
             saturated.append((sensor_names[idx], "MAX"))
-        elif all(v <= 0.03 for v in normalised):
+        elif all(v <= 0.03 for v in recent):
             saturated.append((sensor_names[idx], "ZERO"))
 
     return saturated
