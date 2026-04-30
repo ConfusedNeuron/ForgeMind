@@ -49,7 +49,7 @@ def _validate_output(text: str, capacity_report: dict) -> tuple[bool, str]:
         return False, f"Response too long: {len(text)} chars (max 800)"
 
     machine_name = capacity_report.get("machine_name", "")
-    if machine_name and machine_name not in text:
+    if machine_name and machine_name.lower() not in text.lower():
         return False, f"Machine name '{machine_name}' absent from response"
 
     return True, ""

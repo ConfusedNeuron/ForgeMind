@@ -285,9 +285,10 @@ class FactoryApp(App):
             )
 
         # ── Feature 1.4.1: Sensor Saturation Warnings ────────────────────────
-        machine_sensor_hist = self.state.per_machine_sensor_history.get(
-            machine_id, [[] for _ in range(18)]
-        )
+        # check_sensor_saturation operates on [0, 1]-domain values, so we
+        # pass the scaled per-machine history (the raw buffer feeds the DL
+        # oracle, but saturation thresholds are in scaled units).
+        machine_sensor_hist = self.state.get_scaled_machine_sensor_history(machine_id)
         saturated = check_sensor_saturation(machine_sensor_hist, n_consecutive=5)
         if saturated:
             names_str = ", ".join(
@@ -357,7 +358,7 @@ class FactoryApp(App):
         Extract machine ID from user input.
         Looks for 'Machine N' or machine names. Falls back to cycling 1–5.
         """
-        match = re.search(r'[Mm]achine\s+(\d)', text)
+        match = re.search(r'[Mm]achine\s+(\d+)', text)
         if match:
             mid = int(match.group(1))
             if 1 <= mid <= 5:
@@ -372,7 +373,7 @@ class FactoryApp(App):
         }
         text_lower = text.lower()
         for name, mid in name_map.items():
-            if name in text_lower:
+            if re.search(r'\b' + re.escape(name) + r'\b', text_lower):
                 return mid
 
         self._machine_cycle = (self._machine_cycle % 5) + 1
@@ -428,42 +429,6 @@ class FactoryApp(App):
             reading[idx] = raw_value_for_scaled(idx, float(spike_scaled))
 
         return reading
-
-    def _estimate_capacity(self, machine_id: int, new_status: str) -> float:
-        """
-        Re-estimate factory capacity after this machine's status changes.
-        Simple heuristic: ONLINE=20%, DEGRADED=10%, OFFLINE=0% per machine.
-        Replaced by real ΣPD/T math when capacity agent is wired in.
-        """
-        total = 0.0
-        for mid, m in self.state.machines.items():
-            status = new_status if mid == machine_id else m.status
-            if status == "ONLINE":
-                total += 20.0
-            elif status == "DEGRADED":
-                total += 10.0
-        return round(total, 1)
-
-    def _build_dispatch_order(
-        self, machine_id: int, status: str, rul: float
-    ) -> str:
-        """Build a plain-English floor manager dispatch instruction."""
-        name = self.state.machines[machine_id].name
-        if status == "OFFLINE":
-            return (
-                f"{name} OFFLINE (RUL: {rul:.0f}). "
-                f"Stop all operations on this unit. Schedule emergency repair."
-            )
-        elif status == "DEGRADED":
-            return (
-                f"{name} DEGRADED (RUL: {rul:.0f}). "
-                f"Reduce to 50% load. Schedule maintenance within this shift."
-            )
-        else:
-            return (
-                f"{name} status nominal (RUL: {rul:.0f}). "
-                f"Continue current operations. Monitor trending sensors."
-            )
 
     # ═════════════════════════════════════════════════════════════════════════
     # ACTIONS

@@ -28,7 +28,7 @@ CACHED_SCENARIOS = {
             "[Floor Manager] {machine_name} (Machine {machine_id}) bearing temp critical — HALT production immediately. "
             "Dispatch maintenance crew and initiate cooldown protocol. "
             "Reroute workload to machines with available capacity headroom. "
-            "Factory at {capacity_pct}% — authorize overtime if \u03a3PD/T exceeds 1.0."
+            "Factory at {capacity_pct}% — authorize overtime if \u03a3PD/T exceeds breakeven threshold (~15.9)."
         ),
     },
 

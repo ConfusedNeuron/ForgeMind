@@ -36,7 +36,7 @@ _call_count = 0
 
 
 def reset_call_count() -> None:
-    """Reset the degradation counter. Called by Ctrl+R in app.py."""
+    """Reset the degradation counter."""
     global _call_count
     _call_count = 0
 

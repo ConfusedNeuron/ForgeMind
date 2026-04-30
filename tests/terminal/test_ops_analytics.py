@@ -132,17 +132,17 @@ class TestCheckSensorSaturation:
 
     def test_max_saturation_detected(self):
         history = self._make_history(value=0.5)
-        history[4] = [0.98] * 10   # Xs0 saturated high
+        history[4] = [0.98] * 10   # col 4 = Xs0 → "Vibration X" saturated high
         saturated = check_sensor_saturation(history)
         names = [s[0] for s in saturated]
-        assert "Xs0" in names
+        assert "Vibration X" in names
 
     def test_zero_saturation_detected(self):
         history = self._make_history(value=0.5)
-        history[0] = [0.01] * 10   # W0 stuck at zero
+        history[0] = [0.01] * 10   # col 0 = W0 → "Motor RPM" stuck at zero
         saturated = check_sensor_saturation(history)
         names = [s[0] for s in saturated]
-        assert "W0" in names
+        assert "Motor RPM" in names
 
     def test_saturation_type_is_max_or_zero(self):
         history = self._make_history(value=0.5)
@@ -158,16 +158,18 @@ class TestCheckSensorSaturation:
 
     def test_custom_n_consecutive_3_fires_earlier(self):
         history = self._make_history(value=0.5)
-        history[2] = [0.98] * 3   # only 3 consecutive
+        history[2] = [0.98] * 3   # col 2 = W2 → "Power kW", only 3 consecutive
         saturated = check_sensor_saturation(history, n_consecutive=3)
-        assert any(s[0] == "Xs-2" or "W2" in s[0] for s in saturated)
+        assert any(s[0] == "Power kW" for s in saturated)
 
     def test_18_sensor_names_cover_w_and_xs(self):
+        # All sensors saturated high — all 18 display names should appear.
         history = self._make_history(value=0.99, length=10)
         saturated = check_sensor_saturation(history)
         names = [s[0] for s in saturated]
-        assert any(n.startswith("W") for n in names)
-        assert any(n.startswith("Xs") for n in names)
+        # Check coverage of W-group (cols 0–3) and Xs-group (cols 4–17)
+        assert any(n in ("Motor RPM", "Feed Rate", "Power kW", "Coolant Flow") for n in names)
+        assert any(n in ("Vibration X", "Bearing Temp", "Motor Temp") for n in names)
 
     def test_empty_history_returns_empty(self):
         history = [[] for _ in range(18)]

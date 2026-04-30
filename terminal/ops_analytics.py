@@ -116,7 +116,10 @@ def check_sensor_saturation(
 
     Args:
         sensor_history: list of 18 lists, each containing recent float values
-                        (the ring buffer from FactoryState).
+                        in the SCALED [0, 1] domain.  Callers must pass the
+                        output of FactoryState.get_scaled_machine_sensor_history()
+                        — NOT the raw per-machine buffer, which stores physical
+                        units (K, PSI, etc.) and would never cross 0.97/0.03.
         n_consecutive:  How many consecutive readings must be saturated
                         before alerting (default 5 — avoids single-spike FPs).
 

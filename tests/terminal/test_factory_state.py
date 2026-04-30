@@ -77,8 +77,8 @@ class TestInitialization:
         assert state.active_machine_id == 1
 
     def test_machine_names_are_correct(self, state):
-        expected = {1: "CNC-Alpha", 2: "CNC-Beta", 3: "Press-Gamma",
-                    4: "Lathe-Delta", 5: "Mill-Epsilon"}
+        expected = {1: "Metal Press", 2: "Paint & Coat", 3: "PCB Line",
+                    4: "Final Assembly", 5: "QC & Pack"}
         for mid, name in expected.items():
             assert state.machines[mid].name == name
 
@@ -197,8 +197,8 @@ class TestWindowBuilding:
         w = state.get_machine_sensor_window(3)
         assert w.shape == (50, 18)
 
-    def test_get_machine_sensor_window_falls_back_when_empty(self, state):
-        """Machine 5 has no data → falls back to shared get_sensor_window."""
+    def test_get_machine_sensor_window_returns_healthy_baseline_when_empty(self, state):
+        """Machine 5 has no per-machine data → returns fresh healthy baseline (NOT shared buffer)."""
         vals = np.ones(18, dtype=np.float32) * 0.5
         for _ in range(55):
             state.push_sensor_reading(vals)

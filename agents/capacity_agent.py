@@ -100,6 +100,10 @@ def update_capacity(machine_id: int, new_rul: float) -> dict:
             f"Valid IDs are: {sorted(MACHINES.keys())}"
         )
 
+    import math
+    if not math.isfinite(new_rul) or new_rul < 0:
+        new_rul = 0.0
+
     machine = MACHINES[machine_id]
     machine["rul"] = new_rul
 

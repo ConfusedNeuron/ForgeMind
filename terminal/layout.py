@@ -171,7 +171,11 @@ class SensorFeedWidget(Static):
         machine_sensor_history = state.per_machine_sensor_history.get(
             mid, [[] for _ in range(18)]
         )
-        saturated_sensors = check_sensor_saturation(machine_sensor_history)
+        # Saturation thresholds (0.97 / 0.03) live in the scaled [0, 1] domain;
+        # the per-machine buffer stores RAW values for the DL oracle, so scale
+        # before calling the saturation checker.
+        scaled_sensor_history = state.get_scaled_machine_sensor_history(mid)
+        saturated_sensors = check_sensor_saturation(scaled_sensor_history)
         saturated_names   = {name for name, _ in saturated_sensors}
 
         lines = [
@@ -183,7 +187,7 @@ class SensorFeedWidget(Static):
         ]
 
         for i, name in enumerate(SENSOR_DISPLAY_NAMES):
-            history = machine_sensor_history[i] if machine_sensor_history[i] else state.sensor_history[i]
+            history = machine_sensor_history[i]
             if history:
                 spark = mini_sparkline(history[-20:])
                 if name in saturated_names:

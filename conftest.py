@@ -1,5 +1,5 @@
 """
-tests/conftest.py
+conftest.py  (project root)
 Shared pytest fixtures for the ForgeMind test suite.
 """
 

@@ -192,6 +192,44 @@ class FactoryState:
         """
         return self._build_window(self.sensor_history)
 
+    def get_scaled_machine_sensor_history(self, machine_id: int) -> list:
+        """Per-machine sensor ring buffer with raw values mapped to [0, 1].
+
+        Used by saturation checks, which compare against the [0, 1] domain
+        thresholds 0.97/0.03. The buffer itself stores RAW physical units
+        (so it can feed predict_rul directly via _build_window).
+
+        If the DL scaler is not loadable (e.g. weights file missing),
+        returns the raw history unchanged so callers can still operate.
+
+        Args:
+            machine_id: 1–5
+
+        Returns:
+            list of 18 lists. Each inner list contains scaled [0, 1] values
+            (or raw values, if the scaler is unavailable).
+        """
+        raw = self.per_machine_sensor_history.get(
+            machine_id, [[] for _ in range(18)]
+        )
+        try:
+            from dl_engine.inference import get_scaler_ranges
+            ranges = get_scaler_ranges()
+            mins = ranges["min"]
+            rngs = ranges["range"]
+        except Exception:
+            return [list(h) for h in raw]
+
+        scaled: list = []
+        for idx, h in enumerate(raw):
+            lo  = float(mins[idx])
+            rng = float(rngs[idx])
+            if rng > 0:
+                scaled.append([(v - lo) / rng for v in h])
+            else:
+                scaled.append(list(h))
+        return scaled
+
     def get_machine_sensor_window(self, machine_id: int) -> np.ndarray:
         """
         Build a (50, 18) sensor window for a specific machine.
