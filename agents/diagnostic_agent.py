@@ -205,8 +205,9 @@ def _get_fallback(user_text: str) -> SensorSpike:
 # machine faults eventually stress these thermal/pressure channels.
 #
 # Intensity hierarchy (tuned for gradual degradation path):
-#   First fault → DEGRADED (RUL 20-35), second fault → OFFLINE (RUL ≤15)
-#   The injected[-5:] persistence in app.py compounds damage across hits.
+#   First fault → ONLINE (RUL 50-65), second fault → DEGRADED (RUL 20-35),
+#   third fault → OFFLINE (RUL ≤15)
+#   The injected[-2:] persistence in app.py compounds damage across hits.
 #
 #   0.65–0.70 = direct thermal/pressure fault (strongest RUL impact)
 #   0.50–0.60 = mechanically coupled fault (moderate impact)
@@ -215,7 +216,36 @@ def _get_fallback(user_text: str) -> SensorSpike:
 # RAMP_ESCALATION controls how much each hit adds (additive injection).
 # Module-level so agent_loop._inject_spike (offline path) can import it
 # and stay in sync with the online injection.
-RAMP_ESCALATION: float = 0.55   # fraction of spike added per hit
+RAMP_ESCALATION: float = 0.35   # fraction of spike added per hit
+
+# ── Critical sensor ceiling caps ──────────────────────────────────────────────
+# Model probing (probe_cliff.py, probe_ramp_vs_flat.py) revealed:
+#
+#   1. The CNN-LSTM's Xs2/Xs3 cliff is razor-sharp in isolation:
+#      Xs2=0.48 → RUL 19 (DEGRADED) on a clean baseline
+#
+#   2. BUT the Xs4 ramp (always present as the primary sensor for most faults)
+#      SUPPRESSES the cliff.  With Xs4 ramped to 0.76:
+#        Xs2=0.48 → RUL 62 (still ONLINE!)
+#        Xs2=0.52 → RUL 31 (DEGRADED — but only with Xs4 also capped)
+#
+#   3. Xs4 must therefore also be treated as critical: capped and flat-filled.
+#      When Xs4 is capped at 0.48 on Hit 2 (not ramping to 0.76+), the
+#      Xs2/Xs3 cliff activates reliably.
+#
+# Probe-validated 3-hit lifecycle:
+#   Hit 1: Xs4=0.35, Xs2=0.30, Xs3=0.26 → RUL ~71 (ONLINE)
+#   Hit 2: Xs4=0.48, Xs2=0.52, Xs3=0.45 → RUL ~31 (DEGRADED)
+#   Hit 3: Xs4=0.81, Xs2=0.74, Xs3=0.65 → RUL ~1  (OFFLINE)
+#
+# The cap is selected based on the sensor's current scaled position.
+CRITICAL_SENSORS: set[str] = {"Xs2", "Xs3", "Xs4"}
+CRITICAL_SENSOR_CAPS: list[tuple[float, float]] = [
+    # (if current_scaled < threshold, cap_at)
+    (0.25, 0.35),   # Hit 1: fresh sensor → cap at 0.35 (well below cliff)
+    (0.42, 0.52),   # Hit 2: stressed sensor → cap at 0.52 (DEGRADED with Xs4 present)
+    # Beyond 0.42: uncapped (0.98) — Hit 3 pushes past cliff (OFFLINE)
+]
 
 # Format: primary_sensor → [(correlated_sensor, intensity_fraction), ...]
 SENSOR_CORRELATIONS: dict[str, list[tuple[str, float]]] = {
@@ -246,16 +276,47 @@ SENSOR_CORRELATIONS: dict[str, list[tuple[str, float]]] = {
 }
 
 
+def _get_critical_cap(sensor_id: str, current_scaled: float) -> float:
+    """
+    Return the maximum allowed scaled value for a critical sensor given its
+    current degradation level.
+
+    Non-critical sensors always get 0.98 (effectively uncapped).
+    Critical sensors (Xs2/Xs3) get a ceiling that walks them through the
+    CNN-LSTM's sensitivity cliff in controlled steps.
+
+    Args:
+        sensor_id:      sensor identifier (e.g. "Xs2")
+        current_scaled: sensor's current position in [0, 1]
+
+    Returns:
+        float — maximum target scaled value for this injection
+    """
+    if sensor_id not in CRITICAL_SENSORS:
+        return 0.98
+
+    for threshold, cap in CRITICAL_SENSOR_CAPS:
+        if current_scaled < threshold:
+            return cap
+
+    return 0.98   # past all thresholds — fully uncapped
+
+
 def _inject_spike(base_window: np.ndarray, spike: SensorSpike) -> np.ndarray:
     """
     Inject a fault into a COPY of base_window using ADDITIVE multi-sensor
-    RAMP injection.
+    injection with critical-sensor ceiling caps and flat fill.
 
-    Each hit ADDS degradation on top of the current sensor state rather than
-    ramping to a fixed target.  This enables progressive degradation:
-      Hit 1 → ONLINE (RUL 35-50)
-      Hit 2 → DEGRADED (RUL 15-30)
-      Hit 3 → OFFLINE (RUL ≤15)
+    Non-critical sensors use a gradual RAMP (linspace) for visual realism.
+    Critical sensors (Xs2/Xs3) use FLAT FILL (all 50 rows at target value)
+    because the CNN-LSTM reads the entire 50-row window — a ramp averages
+    out to a lower effective value and the model ignores it.
+
+    Critical sensors are capped per-hit so degradation walks through the
+    CNN-LSTM's sensitivity cliff in steps:
+      Hit 1 → ONLINE (RUL ~70)    — Xs2/Xs3 capped at 0.35
+      Hit 2 → DEGRADED (RUL ~25)  — Xs2/Xs3 capped at 0.48
+      Hit 3 → OFFLINE (RUL ≤15)   — Xs2/Xs3 uncapped (0.98)
 
     The base_window carries accumulated damage from previous faults via
     factory_state._build_window() padding with h[-1] (latest reading).
@@ -268,7 +329,7 @@ def _inject_spike(base_window: np.ndarray, spike: SensorSpike) -> np.ndarray:
         spike:       validated SensorSpike object
 
     Returns:
-        (50, 18) float32 array — copy with additive correlated ramp injected
+        (50, 18) float32 array — copy with additive correlated injection
     """
     from dl_engine.inference import raw_value_for_scaled, get_scaler_ranges
 
@@ -286,31 +347,49 @@ def _inject_spike(base_window: np.ndarray, spike: SensorSpike) -> np.ndarray:
     # ── Primary sensor: additive ramp ─────────────────────────────────────
     raw_start      = float(injected[0, primary_col])
     current_scaled = _current_scaled(primary_col, raw_start)
-    target_scaled  = min(0.98, current_scaled + spike.spike_value * RAMP_ESCALATION)
+    cap            = _get_critical_cap(spike.sensor_id, current_scaled)
+    target_scaled  = min(cap, current_scaled + spike.spike_value * RAMP_ESCALATION)
     raw_end        = raw_value_for_scaled(primary_col, target_scaled)
-    ramp = np.linspace(raw_start, raw_end, 50).astype(np.float32)
-    injected[:, primary_col] = ramp
+
+    if spike.sensor_id in CRITICAL_SENSORS:
+        # Flat fill: model reads all 50 rows equally
+        injected[:, primary_col] = raw_end
+    else:
+        # Gradual ramp: visual realism for non-critical sensors
+        ramp = np.linspace(raw_start, raw_end, 50).astype(np.float32)
+        injected[:, primary_col] = ramp
 
     log.debug(
-        "Spike inject: %s (col %d) ramp %.1f → %.1f (scaled %.2f → %.2f)",
-        spike.sensor_id, primary_col, raw_start, raw_end, current_scaled, target_scaled,
+        "Spike inject: %s (col %d) %s %.1f → %.1f (scaled %.2f → %.2f, cap=%.2f)",
+        spike.sensor_id, primary_col,
+        "FLAT" if spike.sensor_id in CRITICAL_SENSORS else "RAMP",
+        raw_start, raw_end, current_scaled, target_scaled, cap,
     )
 
-    # ── Correlated sensors: additive scaled ramp ──────────────────────────
+    # ── Correlated sensors: additive injection ────────────────────────────
     correlations = SENSOR_CORRELATIONS.get(spike.sensor_id, [])
     for corr_sensor_id, intensity in correlations:
         corr_col       = SENSOR_TO_COL[corr_sensor_id]
         corr_start     = float(injected[0, corr_col])
         corr_current   = _current_scaled(corr_col, corr_start)
+        corr_cap       = _get_critical_cap(corr_sensor_id, corr_current)
         corr_delta     = spike.spike_value * intensity * RAMP_ESCALATION
-        corr_target    = min(0.98, corr_current + corr_delta)
+        corr_target    = min(corr_cap, corr_current + corr_delta)
         corr_end       = raw_value_for_scaled(corr_col, corr_target)
-        corr_ramp = np.linspace(corr_start, corr_end, 50).astype(np.float32)
-        injected[:, corr_col] = corr_ramp
+
+        if corr_sensor_id in CRITICAL_SENSORS:
+            # Flat fill for critical sensors
+            injected[:, corr_col] = corr_end
+        else:
+            # Gradual ramp for non-critical sensors
+            corr_ramp = np.linspace(corr_start, corr_end, 50).astype(np.float32)
+            injected[:, corr_col] = corr_ramp
 
         log.debug(
-            "  + correlated %s (col %d) ramp → scaled %.2f→%.2f (intensity %.0f%%)",
-            corr_sensor_id, corr_col, corr_current, corr_target, intensity * 100,
+            "  + correlated %s (col %d) %s → scaled %.2f→%.2f (intensity %.0f%%, cap=%.2f)",
+            corr_sensor_id, corr_col,
+            "FLAT" if corr_sensor_id in CRITICAL_SENSORS else "RAMP",
+            corr_current, corr_target, intensity * 100, corr_cap,
         )
 
     return injected

@@ -254,6 +254,18 @@ class FactoryApp(App):
         # ── Update factory state ──────────────────────────────────────────────
         self.state.update_from_agent_result(result)
 
+        # ── Persist injected window tail for cumulative damage ────────────────
+        # The diagnostic agent's injected_window contains the full multi-sensor
+        # correlated ramp (including critical Xs2/Xs3).  Push the last 5 rows
+        # into per-machine history so the NEXT fault cycle's base_window pads
+        # with h[-1] that carries ALL accumulated degradation — not just the
+        # sparkline reading (which only knows about 2 keyword-matched sensors).
+        injected = result.get("injected_window")
+        if injected is not None:
+            tail_rows = injected[-2:]
+            for row in tail_rows:
+                self.state.push_machine_sensor_reading(machine_id, row)
+
         # ── Run ops analytics ─────────────────────────────────────────────────
         self._run_ops_analytics(machine_id, old_rul, new_rul)
 

@@ -3,6 +3,8 @@ aircraft
 data/
 test_inference_local.py
 test_*.py
+probe_ramp_vs_flat.py
+probe_cliff.py
 
 # User-specific stuff
 .idea/**/workspace.xml
